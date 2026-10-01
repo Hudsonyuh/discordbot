@@ -80,6 +80,18 @@ function normalizeProduct(input) {
   return String(input || '').trim().toLowerCase().replace(/\s+/g, ' ');
 }
 
+const DELIVERY_TUTORIAL_CHANNELS = {
+  'among us': '1521722099260194889',
+  amongus: '1521722099260194889',
+  roblox: '1520614681444618291',
+  meccha: '1525293094319296572',
+  minecraft: '1519048919034630184',
+  discord: '1288443828495323147'
+};
+
+const VOUCHES_CHANNEL_ID = '1274623501416005667';
+const DOWNLOADS_URL = 'https://thehudsonshop.com/downloads';
+
 async function handleSetup(interaction) {
   if (await denyUnlessStaff(interaction)) return;
   const sub = interaction.options.getSubcommand();
@@ -261,17 +273,55 @@ async function handleDeliver(interaction) {
   await interaction.editReply(`✅ Order **${orderId}** delivered to <@${user.id}>. Customer + **${productInput}** roles were assigned.`);
 
   if (interaction.channel?.isTextBased()) {
+    const tutorialChannelId = DELIVERY_TUTORIAL_CHANNELS[product] || null;
+    const tutorialText = tutorialChannelId
+      ? `If you need further assistance, the **${productInput} tutorial** is available in <#${tutorialChannelId}>.`
+      : 'If you need further assistance, contact staff in this ticket.';
+
     const embed = new EmbedBuilder()
       .setColor(0x57F287)
-      .setTitle('Payment Accepted / Product Delivered')
-      .setDescription(`<@${user.id}> has been approved for **${productInput}**.`)
+      .setTitle('✅ Payment Accepted / Product Delivered')
+      .setDescription(`<@${user.id}>, your **${productInput}** purchase has been delivered.`)
       .addFields(
-        { name: 'Order ID', value: orderId, inline: true },
-        { name: 'Customer Role', value: `<@&${settings.customerRoleId}>`, inline: true },
-        { name: 'Product Role', value: `<@&${productRoleId}>`, inline: true }
+        {
+          name: '1. Check Your Email',
+          value: 'Your key was delivered to the email used to purchase. Check that inbox for your key.'
+        },
+        {
+          name: '2. Download the Loader',
+          value: `[Download from TheHudsonShop.com](${DOWNLOADS_URL})\nLog into your account with the email used to purchase, then download the loader.`
+        },
+        {
+          name: '3. Please Vouch',
+          value: `Once everything is working, please leave a vouch in <#${VOUCHES_CHANNEL_ID}>.`
+        },
+        {
+          name: 'Need Help?',
+          value: tutorialText
+        },
+        {
+          name: 'Order ID',
+          value: orderId,
+          inline: true
+        }
       )
+      .setFooter({ text: 'The Hudson Shop • Thank you for your purchase!' })
       .setTimestamp();
-    await interaction.channel.send({ embeds: [embed], allowedMentions: { users: [user.id] } }).catch(() => null);
+
+    const downloadRow = new ActionRowBuilder().addComponents(
+      new ButtonBuilder()
+        .setStyle(ButtonStyle.Link)
+        .setURL(DOWNLOADS_URL)
+        .setLabel('Download Loader')
+        .setEmoji('⬇️')
+    );
+
+    await interaction.channel.send({
+      content: `<@${user.id}>`,
+      embeds: [embed],
+      components: [downloadRow],
+      allowedMentions: { users: [user.id] }
+    }).catch(() => null);
   }
 
   return sendLog(client, store, interaction.guildId, {
