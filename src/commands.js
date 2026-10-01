@@ -32,8 +32,49 @@ function buildCommands() {
       .addStringOption((o) => o.setName('order-id').setDescription('Your Hudson Shop order ID').setMinLength(3).setMaxLength(100).setRequired(true)),
 
     new SlashCommandBuilder()
+      .setName('deliver')
+      .setDescription('Accept a pending claim and give the customer + purchased-product roles.')
+      .addUserOption((o) => o.setName('member').setDescription('Customer to deliver to').setRequired(true))
+      .addStringOption((o) => o.setName('order-id').setDescription('Pending Hudson Shop order ID').setMinLength(3).setMaxLength(100).setRequired(true))
+      .addStringOption((o) => o.setName('product').setDescription('Configured product name, e.g. Among Us').setMinLength(1).setMaxLength(100).setRequired(true))
+      .setDefaultMemberPermissions(PermissionFlagsBits.ManageRoles),
+
+    new SlashCommandBuilder()
+      .setName('product-role')
+      .setDescription('Map store products to Discord roles for /deliver.')
+      .addSubcommand((s) => s
+        .setName('set')
+        .setDescription('Map a product name to a Discord role.')
+        .addStringOption((o) => o.setName('product').setDescription('Example: Among Us').setRequired(true).setMaxLength(100))
+        .addRoleOption((o) => o.setName('role').setDescription('Role to give for this product').setRequired(true)))
+      .addSubcommand((s) => s
+        .setName('remove')
+        .setDescription('Remove a product-to-role mapping.')
+        .addStringOption((o) => o.setName('product').setDescription('Product name').setRequired(true).setMaxLength(100)))
+      .addSubcommand((s) => s.setName('list').setDescription('Show all configured product roles.'))
+      .setDefaultMemberPermissions(PermissionFlagsBits.ManageRoles),
+
+    new SlashCommandBuilder()
       .setName('ticket-panel')
       .setDescription('Post the Hudson Shop Purchase / Support / Claim menu in this channel.')
+      .setDefaultMemberPermissions(PermissionFlagsBits.ManageGuild),
+
+    new SlashCommandBuilder()
+      .setName('welcome')
+      .setDescription('Configure and preview the server welcome message.')
+      .addSubcommand((s) => s
+        .setName('set')
+        .setDescription('Set the welcome channel and custom message.')
+        .addChannelOption((o) => o.setName('channel').setDescription('Welcome channel').addChannelTypes(ChannelType.GuildText, ChannelType.GuildAnnouncement).setRequired(true))
+        .addStringOption((o) => o.setName('message').setDescription('Supports {user}, {username}, {displayName}, {server}, {memberCount}').setMaxLength(1500).setRequired(true))
+        .addStringOption((o) => o.setName('title').setDescription('Optional embed title with the same placeholders').setMaxLength(200)))
+      .addSubcommand((s) => s
+        .setName('message')
+        .setDescription('Change only the welcome message text.')
+        .addStringOption((o) => o.setName('message').setDescription('Supports {user}, {username}, {displayName}, {server}, {memberCount}').setMaxLength(1500).setRequired(true)))
+      .addSubcommand((s) => s.setName('test').setDescription('Send a test welcome using your own account.'))
+      .addSubcommand((s) => s.setName('off').setDescription('Turn automatic welcomes off.'))
+      .addSubcommand((s) => s.setName('status').setDescription('Show the current welcome configuration.'))
       .setDefaultMemberPermissions(PermissionFlagsBits.ManageGuild),
 
     new SlashCommandBuilder()
@@ -65,12 +106,24 @@ function buildCommands() {
       .setDescription('Configure the Hudson Shop bot for this server.')
       .addSubcommand((s) => s
         .setName('ticket-category')
-        .setDescription('Add a category whose new ticket channels get the Hudson welcome menu.')
+        .setDescription('Add a category whose new ticket channels get the Hudson menu.')
         .addChannelOption((o) => o.setName('category').setDescription('Ticket category').addChannelTypes(ChannelType.GuildCategory).setRequired(true)))
       .addSubcommand((s) => s
         .setName('remove-ticket-category')
         .setDescription('Remove a configured ticket category.')
         .addChannelOption((o) => o.setName('category').setDescription('Ticket category').addChannelTypes(ChannelType.GuildCategory).setRequired(true)))
+      .addSubcommand((s) => s
+        .setName('ticket-parent')
+        .setDescription('Treat threads created under this channel as tickets.')
+        .addChannelOption((o) => o.setName('channel').setDescription('Purchase/ticket parent channel').addChannelTypes(ChannelType.GuildText, ChannelType.GuildForum).setRequired(true)))
+      .addSubcommand((s) => s
+        .setName('remove-ticket-parent')
+        .setDescription('Remove a configured ticket parent channel.')
+        .addChannelOption((o) => o.setName('channel').setDescription('Purchase/ticket parent channel').addChannelTypes(ChannelType.GuildText, ChannelType.GuildForum).setRequired(true)))
+      .addSubcommand((s) => s
+        .setName('uncategorized-tickets')
+        .setDescription('Treat newly-created uncategorized text channels as tickets.')
+        .addBooleanOption((o) => o.setName('enabled').setDescription('Enabled').setRequired(true)))
       .addSubcommand((s) => s
         .setName('log-channel')
         .setDescription('Set the private bot/moderation log channel.')
@@ -79,6 +132,10 @@ function buildCommands() {
         .setName('staff-role')
         .setDescription('Set a role that can use staff bot features and bypass AutoMod.')
         .addRoleOption((o) => o.setName('role').setDescription('Staff role').setRequired(true)))
+      .addSubcommand((s) => s
+        .setName('customer-role')
+        .setDescription('Set the Customer role that /deliver should give.')
+        .addRoleOption((o) => o.setName('role').setDescription('Customer role').setRequired(true)))
       .addSubcommand((s) => s
         .setName('ticket-welcome')
         .setDescription('Turn automatic ticket welcome menus on or off.')
