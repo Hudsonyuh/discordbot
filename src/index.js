@@ -11,13 +11,15 @@ const {
   ButtonStyle,
   ActivityType,
   REST,
-  Routes
+  Routes,
+  Events
 } = require('discord.js');
 const { DataStore } = require('./store');
 const { cleanAmount, clearPreserveChannel, recreateChannel } = require('./cleaner');
 const { handleAutoMod, normalizeDomain } = require('./automod');
 const {
   postTicketPanel,
+  isTicketChannel,
   onTicketChannelCreated,
   handleTicketButton,
   handleTicketModal,
@@ -26,6 +28,7 @@ const {
 const { handleAnnouncementCommand, startAnnouncementScheduler } = require('./announcements');
 const { sendLog } = require('./logger');
 const { buildCommands } = require('./commands');
+const { sendWelcome, handleJoinSystemMessage } = require('./welcome');
 
 if (!process.env.DISCORD_TOKEN) {
   console.error('Missing DISCORD_TOKEN. Copy .env.example to .env and fill it in.');
@@ -33,13 +36,15 @@ if (!process.env.DISCORD_TOKEN) {
 }
 
 const store = new DataStore(path.join(__dirname, '..', 'data', 'db.json'));
-const client = new Client({
-  intents: [
-    GatewayIntentBits.Guilds,
-    GatewayIntentBits.GuildMessages,
-    GatewayIntentBits.MessageContent
-  ]
-});
+const intents = [
+  GatewayIntentBits.Guilds,
+  GatewayIntentBits.GuildMessages,
+  GatewayIntentBits.MessageContent
+];
+if (String(process.env.ENABLE_MEMBER_INTENT).toLowerCase() === 'true') {
+  intents.push(GatewayIntentBits.GuildMembers);
+}
+const client = new Client({ intents });
 
 async function registerGuildCommands(guildId) {
   if (!process.env.DISCORD_CLIENT_ID) {
@@ -70,6 +75,10 @@ async function denyUnlessStaff(interaction) {
   return true;
 }
 
+function normalizeProduct(input) {
+  return String(input || '').trim().toLowerCase().replace(/\s+/g, ' ');
+}
+
 async function handleSetup(interaction) {
   if (await denyUnlessStaff(interaction)) return;
   const sub = interaction.options.getSubcommand();
@@ -85,6 +94,21 @@ async function handleSetup(interaction) {
     await store.removeTicketCategory(guildId, category.id);
     return interaction.reply({ content: `✅ Removed <#${category.id}> from the automatic ticket categories.`, ephemeral: true });
   }
+  if (sub === 'ticket-parent') {
+    const channel = interaction.options.getChannel('channel', true);
+    await store.addTicketParent(guildId, channel.id);
+    return interaction.reply({ content: `✅ Threads created under <#${channel.id}> will now receive the Purchase / Support / Claim menu.`, ephemeral: true });
+  }
+  if (sub === 'remove-ticket-parent') {
+    const channel = interaction.options.getChannel('channel', true);
+    await store.removeTicketParent(guildId, channel.id);
+    return interaction.reply({ content: `✅ Removed <#${channel.id}> as a ticket parent channel.`, ephemeral: true });
+  }
+  if (sub === 'uncategorized-tickets') {
+    const enabled = interaction.options.getBoolean('enabled', true);
+    await store.updateSettings(guildId, { uncategorizedTickets: enabled });
+    return interaction.reply({ content: `✅ Automatic menus for newly-created uncategorized ticket channels are now **${enabled ? 'ON' : 'OFF'}**.`, ephemeral: true });
+  }
   if (sub === 'log-channel') {
     const channel = interaction.options.getChannel('channel', true);
     await store.updateSettings(guildId, { logChannelId: channel.id });
@@ -94,6 +118,11 @@ async function handleSetup(interaction) {
     const role = interaction.options.getRole('role', true);
     await store.updateSettings(guildId, { staffRoleId: role.id });
     return interaction.reply({ content: `✅ <@&${role.id}> is configured as the Hudson bot staff role and bypasses AutoMod.`, ephemeral: true });
+  }
+  if (sub === 'customer-role') {
+    const role = interaction.options.getRole('role', true);
+    await store.updateSettings(guildId, { customerRoleId: role.id });
+    return interaction.reply({ content: `✅ <@&${role.id}> is now the Customer role given by /deliver.`, ephemeral: true });
   }
   if (sub === 'ticket-welcome') {
     const enabled = interaction.options.getBoolean('enabled', true);
@@ -111,15 +140,149 @@ async function handleSetup(interaction) {
       .setColor(0x7628BE)
       .setTitle('Hudson Bot Configuration')
       .addFields(
-        { name: 'Ticket Categories', value: s.ticketCategoryIds.length ? s.ticketCategoryIds.map((id) => `<#${id}>`).join(', ') : 'Not set' },
+        { name: 'Ticket Categories', value: s.ticketCategoryIds.length ? s.ticketCategoryIds.map((id) => `<#${id}>`).join(', ') : 'None' },
+        { name: 'Ticket Parent Channels', value: s.ticketParentChannelIds.length ? s.ticketParentChannelIds.map((id) => `<#${id}>`).join(', ') : 'None' },
+        { name: 'Uncategorized Tickets', value: s.uncategorizedTickets ? 'On' : 'Off', inline: true },
         { name: 'Log Channel', value: s.logChannelId ? `<#${s.logChannelId}>` : 'Not set', inline: true },
         { name: 'Staff Role', value: s.staffRoleId ? `<@&${s.staffRoleId}>` : 'Not set', inline: true },
-        { name: 'Ticket Welcome', value: s.ticketWelcome ? 'On' : 'Off', inline: true },
+        { name: 'Customer Role', value: s.customerRoleId ? `<@&${s.customerRoleId}>` : 'Not set', inline: true },
+        { name: 'Welcome Channel', value: s.welcome?.channelId ? `<#${s.welcome.channelId}>` : 'Not set', inline: true },
+        { name: 'Welcome Enabled', value: s.welcome?.enabled ? 'On' : 'Off', inline: true },
         { name: 'AutoMod', value: s.automodEnabled ? 'On' : 'Off', inline: true },
-        { name: 'Store', value: s.storeUrl || process.env.STORE_URL || 'https://thehudsonshop.com' }
+        { name: 'Product Roles', value: Object.entries(s.productRoles || {}).length ? Object.entries(s.productRoles).map(([p, r]) => `• **${p}** → <@&${r}>`).join('\n').slice(0, 1000) : 'None configured' }
       );
     return interaction.reply({ embeds: [embed], ephemeral: true });
   }
+}
+
+async function handleWelcomeCommand(interaction) {
+  if (await denyUnlessStaff(interaction)) return;
+  const sub = interaction.options.getSubcommand();
+  const settings = store.getSettings(interaction.guildId);
+
+  if (sub === 'set') {
+    const channel = interaction.options.getChannel('channel', true);
+    const message = interaction.options.getString('message', true);
+    const title = interaction.options.getString('title') || settings.welcome?.title || 'Welcome to {server}!';
+    await store.updateSettings(interaction.guildId, { welcome: { ...settings.welcome, enabled: true, channelId: channel.id, message, title } });
+    return interaction.reply({ content: `✅ Welcome messages are enabled in <#${channel.id}>. Use **/welcome test** to preview it.`, ephemeral: true });
+  }
+  if (sub === 'message') {
+    const message = interaction.options.getString('message', true);
+    await store.updateSettings(interaction.guildId, { welcome: { ...settings.welcome, message } });
+    return interaction.reply({ content: '✅ Welcome message updated. Use **/welcome test** to preview it.', ephemeral: true });
+  }
+  if (sub === 'test') {
+    const member = await interaction.guild.members.fetch(interaction.user.id);
+    const channelId = settings.welcome?.channelId || interaction.channelId;
+    await sendWelcome(member, store, { force: true, channelOverride: channelId });
+    return interaction.reply({ content: `✅ Test welcome sent in <#${channelId}>.`, ephemeral: true });
+  }
+  if (sub === 'off') {
+    await store.updateSettings(interaction.guildId, { welcome: { ...settings.welcome, enabled: false } });
+    return interaction.reply({ content: '✅ Automatic welcome messages are off.', ephemeral: true });
+  }
+  if (sub === 'status') {
+    const w = settings.welcome || {};
+    const embed = new EmbedBuilder()
+      .setColor(0x7628BE)
+      .setTitle('Welcome Configuration')
+      .addFields(
+        { name: 'Enabled', value: w.enabled ? 'Yes' : 'No', inline: true },
+        { name: 'Channel', value: w.channelId ? `<#${w.channelId}>` : 'Not set', inline: true },
+        { name: 'Title', value: w.title || '(default)' },
+        { name: 'Message', value: w.message || '(default)' },
+        { name: 'Placeholders', value: '`{user}` `{username}` `{displayName}` `{server}` `{memberCount}`' }
+      );
+    return interaction.reply({ embeds: [embed], ephemeral: true });
+  }
+}
+
+async function handleProductRoleCommand(interaction) {
+  if (await denyUnlessStaff(interaction)) return;
+  const sub = interaction.options.getSubcommand();
+  if (sub === 'set') {
+    const product = interaction.options.getString('product', true);
+    const role = interaction.options.getRole('role', true);
+    const key = await store.setProductRole(interaction.guildId, product, role.id);
+    return interaction.reply({ content: `✅ **${key}** will give <@&${role.id}> when staff runs /deliver.`, ephemeral: true });
+  }
+  if (sub === 'remove') {
+    const product = interaction.options.getString('product', true);
+    const removed = await store.removeProductRole(interaction.guildId, product);
+    return interaction.reply({ content: removed ? '✅ Product role mapping removed.' : 'No mapping was found for that product.', ephemeral: true });
+  }
+  if (sub === 'list') {
+    const roles = store.getSettings(interaction.guildId).productRoles || {};
+    const entries = Object.entries(roles);
+    return interaction.reply({ content: entries.length ? entries.map(([p, r]) => `• **${p}** → <@&${r}>`).join('\n') : 'No product roles are configured yet.', ephemeral: true });
+  }
+}
+
+async function handleDeliver(interaction) {
+  if (await denyUnlessStaff(interaction)) return;
+  await interaction.deferReply({ ephemeral: true });
+
+  const user = interaction.options.getUser('member', true);
+  const orderId = interaction.options.getString('order-id', true).trim().toUpperCase();
+  const productInput = interaction.options.getString('product', true);
+  const product = normalizeProduct(productInput);
+  const settings = store.getSettings(interaction.guildId);
+  const claim = store.getClaim(orderId);
+
+  if (!claim) return interaction.editReply(`❌ I couldn't find a pending claim for order **${orderId}**.`);
+  if (claim.guildId !== interaction.guildId) return interaction.editReply('❌ That order belongs to a different server.');
+  if (claim.userId !== user.id) return interaction.editReply(`❌ That order was submitted by <@${claim.userId}>, not <@${user.id}>.`);
+  if (claim.status === 'delivered') return interaction.editReply(`❌ Order **${orderId}** was already delivered.`);
+  if (!settings.customerRoleId) return interaction.editReply('❌ Set the Customer role first with **/setup customer-role**.');
+
+  const productRoleId = settings.productRoles?.[product];
+  if (!productRoleId) return interaction.editReply(`❌ No Discord role is mapped to **${productInput}**. Use **/product-role set** first.`);
+
+  const member = await interaction.guild.members.fetch(user.id).catch(() => null);
+  if (!member) return interaction.editReply('❌ I could not find that member in this server.');
+
+  try {
+    await member.roles.add([settings.customerRoleId, productRoleId], `Delivered order ${orderId} by ${interaction.user.tag}`);
+  } catch (err) {
+    return interaction.editReply(`❌ I couldn't assign the roles. Make sure my bot role is above the Customer and product roles and has **Manage Roles**. Discord error: ${err.message}`);
+  }
+
+  await store.updateClaim(orderId, {
+    status: 'delivered',
+    product,
+    customerRoleId: settings.customerRoleId,
+    productRoleId,
+    deliveredBy: interaction.user.id,
+    deliveredAt: new Date().toISOString()
+  });
+
+  await interaction.editReply(`✅ Order **${orderId}** delivered to <@${user.id}>. Customer + **${productInput}** roles were assigned.`);
+
+  if (interaction.channel?.isTextBased()) {
+    const embed = new EmbedBuilder()
+      .setColor(0x57F287)
+      .setTitle('Payment Accepted / Product Delivered')
+      .setDescription(`<@${user.id}> has been approved for **${productInput}**.`)
+      .addFields(
+        { name: 'Order ID', value: orderId, inline: true },
+        { name: 'Customer Role', value: `<@&${settings.customerRoleId}>`, inline: true },
+        { name: 'Product Role', value: `<@&${productRoleId}>`, inline: true }
+      )
+      .setTimestamp();
+    await interaction.channel.send({ embeds: [embed], allowedMentions: { users: [user.id] } }).catch(() => null);
+  }
+
+  return sendLog(client, store, interaction.guildId, {
+    title: 'Order delivered',
+    description: `<@${interaction.user.id}> approved order **${orderId}** for <@${user.id}>.`,
+    color: 0x57F287,
+    fields: [
+      { name: 'Product', value: productInput, inline: true },
+      { name: 'Customer Role', value: `<@&${settings.customerRoleId}>`, inline: true },
+      { name: 'Product Role', value: `<@&${productRoleId}>`, inline: true }
+    ]
+  });
 }
 
 async function handleAutomodCommand(interaction) {
@@ -236,13 +399,16 @@ async function handleCommand(interaction) {
   }
 
   if (interaction.commandName === 'clear-all') return handleClearAllCommand(interaction);
+  if (interaction.commandName === 'deliver') return handleDeliver(interaction);
+  if (interaction.commandName === 'product-role') return handleProductRoleCommand(interaction);
+  if (interaction.commandName === 'welcome') return handleWelcomeCommand(interaction);
 
   if (interaction.commandName === 'claim') {
     const orderId = interaction.options.getString('order-id', true);
     const settings = store.getSettings(interaction.guildId);
-    const isTicket = interaction.channel?.parentId && settings.ticketCategoryIds.includes(interaction.channel.parentId);
+    const ticket = isTicketChannel(interaction.channel, settings);
     await interaction.deferReply({ ephemeral: true });
-    return processClaim({ interaction, orderId, client, store, publicConfirmation: Boolean(isTicket) });
+    return processClaim({ interaction, orderId, client, store, publicConfirmation: ticket });
   }
 
   if (interaction.commandName === 'ticket-panel') {
@@ -261,7 +427,7 @@ async function handleCommand(interaction) {
 }
 
 function startWebServer() {
-  const port = Number(process.env.WEB_PORT || 3000);
+  const port = Number(process.env.PORT || process.env.WEB_PORT || 3000);
   const server = http.createServer((req, res) => {
     if (req.method === 'GET' && req.url === '/health') {
       res.writeHead(200, { 'content-type': 'application/json' });
@@ -270,10 +436,10 @@ function startWebServer() {
     res.writeHead(404);
     return res.end('Not found');
   });
-  server.listen(port, () => console.log(`Health server listening on port ${port}.`));
+  server.listen(port, '0.0.0.0', () => console.log(`Health server listening on port ${port}.`));
 }
 
-client.once('ready', async () => {
+client.once(Events.ClientReady, async () => {
   console.log(`Logged in as ${client.user.tag}.`);
   client.user.setActivity('TheHudsonShop.com', { type: ActivityType.Watching });
   startAnnouncementScheduler(client, store);
@@ -282,7 +448,12 @@ client.once('ready', async () => {
 
 client.on('guildCreate', (guild) => registerGuildCommands(guild.id));
 client.on('channelCreate', (channel) => onTicketChannelCreated(channel, store));
-client.on('messageCreate', (message) => handleAutoMod(message, client, store).catch((err) => console.error('[automod]', err)));
+client.on('threadCreate', (thread) => onTicketChannelCreated(thread, store));
+client.on('guildMemberAdd', (member) => sendWelcome(member, store).catch((err) => console.error('[welcome]', err.message)));
+client.on('messageCreate', async (message) => {
+  await handleJoinSystemMessage(message, store).catch((err) => console.error('[welcome-system]', err.message));
+  await handleAutoMod(message, client, store).catch((err) => console.error('[automod]', err));
+});
 
 client.on('interactionCreate', async (interaction) => {
   try {
