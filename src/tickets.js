@@ -175,8 +175,7 @@ function startTicketWatcher(client, store) {
 }
 
 function maskedOrder(orderId) {
-  const s = String(orderId);
-  return s.length <= 4 ? '••••' : `••••${s.slice(-4)}`;
+  return String(orderId);
 }
 
 async function processClaim({ interaction, orderId, client, store, publicConfirmation = false }) {
