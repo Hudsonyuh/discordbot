@@ -51,7 +51,7 @@ function isTicketChannel(channel, settings) {
   }
 
   if (channel.parentId && settings.ticketCategoryIds?.includes(channel.parentId)) return true;
-  if (!channel.parentId && settings.uncategorizedTickets) return true;
+  if (!channel.parentId && (settings.uncategorizedTickets || String(process.env.UNCATEGORIZED_TICKETS).toLowerCase() === 'true')) return true;
 
   return false;
 }
