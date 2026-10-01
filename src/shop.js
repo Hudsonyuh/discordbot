@@ -77,18 +77,57 @@ class ShopClient {
       const htmlResponse = await this.request(`${SHOP_ORIGIN}/admin`);
       if (!htmlResponse.ok) throw new Error('The shop admin page is unavailable.');
       const html = await htmlResponse.text();
-      const adminAsset = html.match(/\/assets\/admin-[a-zA-Z0-9_-]+\.js/)?.[0];
-      if (!adminAsset) throw new Error('Cannot locate the shop admin module.');
-      const adminResponse = await this.request(SHOP_ORIGIN + adminAsset);
-      if (!adminResponse.ok) throw new Error('Cannot load the shop admin module.');
-      const admin = await adminResponse.text();
-      const functionsAsset = admin.match(/admin-orders\.functions-[a-zA-Z0-9_-]+\.js/)?.[0];
-      if (!functionsAsset) throw new Error('Cannot locate the shop payment actions.');
-      const functionsResponse = await this.request(`${SHOP_ORIGIN}/assets/${functionsAsset}`);
-      if (!functionsResponse.ok) throw new Error('Cannot load the shop payment actions.');
-      this.functionIds = discoverFunctions(await functionsResponse.text());
-      this.discoveryExpires = Date.now() + 5 * 60_000;
-      return this.functionIds;
+
+      const queue = [];
+      const queued = new Set();
+      const enqueueAssets = (source, baseUrl) => {
+        const patterns = [
+          /["'](\/assets\/[a-zA-Z0-9_./-]+\.js(?:\?[^"']*)?)["']/g,
+          /["'](\.\.?\/[a-zA-Z0-9_./-]+\.js(?:\?[^"']*)?)["']/g
+        ];
+        for (const pattern of patterns) {
+          for (const match of source.matchAll(pattern)) {
+            let url;
+            try { url = new URL(match[1], baseUrl); } catch { continue; }
+            if (url.origin !== SHOP_ORIGIN || !url.pathname.startsWith('/assets/')) continue;
+            url.hash = '';
+            const href = url.href;
+            if (!queued.has(href)) {
+              queued.add(href);
+              queue.push(href);
+            }
+          }
+        }
+      };
+
+      enqueueAssets(html, `${SHOP_ORIGIN}/admin`);
+      let scanned = 0;
+      while (queue.length && scanned < 80) {
+        const assetUrl = queue.shift();
+        scanned += 1;
+        const response = await this.request(assetUrl);
+        if (!response.ok) continue;
+        const source = await response.text();
+
+        if (
+          source.includes('adminListManualOrders') &&
+          source.includes('adminGetOrderDetail') &&
+          source.includes('adminConfirmPayment')
+        ) {
+          try {
+            this.functionIds = discoverFunctions(source);
+            this.discoveryExpires = Date.now() + 5 * 60_000;
+            return this.functionIds;
+          } catch {
+            // The names can appear in a route chunk that re-exports them.
+            // Continue following its imports until we reach the server-function bundle.
+          }
+        }
+
+        enqueueAssets(source, assetUrl);
+      }
+
+      throw new Error('Cannot locate the shop payment actions in the published site assets.');
     })();
     try { return await this.discoveryPending; } finally { this.discoveryPending = null; }
   }
