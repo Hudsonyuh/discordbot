@@ -9,7 +9,9 @@ const {
   ActionRowBuilder,
   ButtonBuilder,
   ButtonStyle,
-  ActivityType
+  ActivityType,
+  REST,
+  Routes
 } = require('discord.js');
 const { DataStore } = require('./store');
 const { cleanAmount, clearPreserveChannel, recreateChannel } = require('./cleaner');
@@ -23,6 +25,7 @@ const {
 } = require('./tickets');
 const { handleAnnouncementCommand, startAnnouncementScheduler } = require('./announcements');
 const { sendLog } = require('./logger');
+const { buildCommands } = require('./commands');
 
 if (!process.env.DISCORD_TOKEN) {
   console.error('Missing DISCORD_TOKEN. Copy .env.example to .env and fill it in.');
@@ -37,6 +40,21 @@ const client = new Client({
     GatewayIntentBits.MessageContent
   ]
 });
+
+async function registerGuildCommands(guildId) {
+  if (!process.env.DISCORD_CLIENT_ID) {
+    console.error('[commands] Missing DISCORD_CLIENT_ID; cannot register slash commands.');
+    return;
+  }
+  try {
+    const rest = new REST({ version: '10' }).setToken(process.env.DISCORD_TOKEN);
+    const commands = buildCommands();
+    await rest.put(Routes.applicationGuildCommands(process.env.DISCORD_CLIENT_ID, guildId), { body: commands });
+    console.log(`Registered ${commands.length} slash commands in guild ${guildId}.`);
+  } catch (err) {
+    console.error(`[commands] Failed to register commands in guild ${guildId}:`, err.message);
+  }
+}
 
 function isStaff(interaction) {
   if (!interaction.guildId || !interaction.member) return false;
@@ -255,12 +273,14 @@ function startWebServer() {
   server.listen(port, () => console.log(`Health server listening on port ${port}.`));
 }
 
-client.once('ready', () => {
+client.once('ready', async () => {
   console.log(`Logged in as ${client.user.tag}.`);
   client.user.setActivity('TheHudsonShop.com', { type: ActivityType.Watching });
   startAnnouncementScheduler(client, store);
+  for (const guildId of client.guilds.cache.keys()) await registerGuildCommands(guildId);
 });
 
+client.on('guildCreate', (guild) => registerGuildCommands(guild.id));
 client.on('channelCreate', (channel) => onTicketChannelCreated(channel, store));
 client.on('messageCreate', (message) => handleAutoMod(message, client, store).catch((err) => console.error('[automod]', err)));
 
