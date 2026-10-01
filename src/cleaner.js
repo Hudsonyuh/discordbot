@@ -2,7 +2,7 @@ const { Collection } = require('discord.js');
 
 const TWO_WEEKS_MS = 14 * 24 * 60 * 60 * 1000;
 const SAFETY_MS = 60 * 1000;
-const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+const OLD_DELETE_CONCURRENCY = 5;
 
 async function fetchMessages(channel, amount, includePinned = false) {
   const collected = new Collection();
@@ -16,51 +16,68 @@ async function fetchMessages(channel, amount, includePinned = false) {
       if (includePinned || !msg.pinned) collected.set(msg.id, msg);
       if (collected.size >= amount) break;
     }
+
     before = batch.last()?.id;
     if (batch.size < 100) break;
   }
+
   return collected;
+}
+
+async function deleteOldMessages(messages, onProgress, counters) {
+  for (let i = 0; i < messages.length; i += OLD_DELETE_CONCURRENCY) {
+    const chunk = messages.slice(i, i + OLD_DELETE_CONCURRENCY);
+    const results = await Promise.allSettled(chunk.map((msg) => msg.delete()));
+
+    for (const result of results) {
+      if (result.status === 'fulfilled') counters.deleted += 1;
+      else counters.failed += 1;
+    }
+
+    onProgress?.({
+      deleted: counters.deleted,
+      failed: counters.failed,
+      total: counters.total
+    });
+  }
 }
 
 async function deleteMessagesAnyAge(channel, messages, onProgress) {
   const cutoff = Date.now() - TWO_WEEKS_MS + SAFETY_MS;
   const recent = [...messages.values()].filter((m) => m.createdTimestamp > cutoff);
   const old = [...messages.values()].filter((m) => m.createdTimestamp <= cutoff);
-  let deleted = 0;
-  let failed = 0;
+
+  const counters = {
+    deleted: 0,
+    failed: 0,
+    total: messages.size
+  };
 
   for (let i = 0; i < recent.length; i += 100) {
     const chunk = recent.slice(i, i + 100).map((m) => m.id);
+
     try {
       const result = await channel.bulkDelete(chunk, true);
-      deleted += result.size;
-      failed += chunk.length - result.size;
+      counters.deleted += result.size;
+      counters.failed += chunk.length - result.size;
     } catch {
-      for (const id of chunk) {
-        try {
-          const msg = messages.get(id) || await channel.messages.fetch(id);
-          await msg.delete();
-          deleted += 1;
-        } catch {
-          failed += 1;
-        }
-      }
+      const fallbackMessages = chunk.map((id) => messages.get(id)).filter(Boolean);
+      await deleteOldMessages(fallbackMessages, onProgress, counters);
     }
-    onProgress?.({ deleted, failed, total: messages.size });
+
+    onProgress?.({
+      deleted: counters.deleted,
+      failed: counters.failed,
+      total: counters.total
+    });
   }
 
-  for (const msg of old) {
-    try {
-      await msg.delete();
-      deleted += 1;
-    } catch {
-      failed += 1;
-    }
-    onProgress?.({ deleted, failed, total: messages.size });
-    await sleep(250);
-  }
+  await deleteOldMessages(old, onProgress, counters);
 
-  return { deleted, failed };
+  return {
+    deleted: counters.deleted,
+    failed: counters.failed
+  };
 }
 
 async function cleanAmount(channel, amount, includePinned = false, onProgress) {
@@ -76,6 +93,7 @@ async function clearPreserveChannel(channel, onProgress) {
   while (true) {
     const batch = await channel.messages.fetch({ limit: 100 });
     if (!batch.size) break;
+
     const result = await deleteMessagesAnyAge(channel, batch);
     deleted += result.deleted;
     failed += result.failed;
@@ -95,4 +113,8 @@ async function recreateChannel(channel, reason) {
   return clone;
 }
 
-module.exports = { cleanAmount, clearPreserveChannel, recreateChannel };
+module.exports = {
+  cleanAmount,
+  clearPreserveChannel,
+  recreateChannel
+};
