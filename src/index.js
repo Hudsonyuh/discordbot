@@ -237,16 +237,13 @@ async function handleDeliver(interaction) {
   await interaction.deferReply({ ephemeral: true });
 
   const user = interaction.options.getUser('member', true);
-  const orderId = interaction.options.getString('order-id', true).trim().toUpperCase();
+  const rawOrderId = interaction.options.getString('order-id');
+  const orderId = rawOrderId ? rawOrderId.trim().toUpperCase() : null;
   const productInput = interaction.options.getString('product', true);
   const product = normalizeProduct(productInput);
   const settings = store.getSettings(interaction.guildId);
-  const claim = store.getClaim(orderId);
+  const claim = orderId ? store.getClaim(orderId) : null;
 
-  if (!claim) return interaction.editReply(`❌ I couldn't find a pending claim for order **${orderId}**.`);
-  if (claim.guildId !== interaction.guildId) return interaction.editReply('❌ That order belongs to a different server.');
-  if (claim.userId !== user.id) return interaction.editReply(`❌ That order was submitted by <@${claim.userId}>, not <@${user.id}>.`);
-  if (claim.status === 'delivered') return interaction.editReply(`❌ Order **${orderId}** was already delivered.`);
   if (!settings.customerRoleId) return interaction.editReply('❌ Set the Customer role first with **/setup customer-role**.');
 
   const productRoleId = settings.productRoles?.[product];
@@ -256,21 +253,27 @@ async function handleDeliver(interaction) {
   if (!member) return interaction.editReply('❌ I could not find that member in this server.');
 
   try {
-    await member.roles.add([settings.customerRoleId, productRoleId], `Delivered order ${orderId} by ${interaction.user.tag}`);
+    const reason = orderId
+      ? `Delivered ${productInput} • order ${orderId} • by ${interaction.user.tag}`
+      : `Delivered ${productInput} by ${interaction.user.tag}`;
+    await member.roles.add([settings.customerRoleId, productRoleId], reason);
   } catch (err) {
     return interaction.editReply(`❌ I couldn't assign the roles. Make sure my bot role is above the Customer and product roles and has **Manage Roles**. Discord error: ${err.message}`);
   }
 
-  await store.updateClaim(orderId, {
-    status: 'delivered',
-    product,
-    customerRoleId: settings.customerRoleId,
-    productRoleId,
-    deliveredBy: interaction.user.id,
-    deliveredAt: new Date().toISOString()
-  });
+  if (claim && claim.guildId === interaction.guildId && claim.userId === user.id) {
+    await store.updateClaim(orderId, {
+      status: 'delivered',
+      product,
+      customerRoleId: settings.customerRoleId,
+      productRoleId,
+      deliveredBy: interaction.user.id,
+      deliveredAt: new Date().toISOString()
+    });
+  }
 
-  await interaction.editReply(`✅ Order **${orderId}** delivered to <@${user.id}>. Customer + **${productInput}** roles were assigned.`);
+  const deliveryReference = orderId ? ` for order **${orderId}**` : '';
+  await interaction.editReply(`✅ **${productInput}** delivered to <@${user.id}>${deliveryReference}. Customer + product roles were assigned.`);
 
   if (interaction.channel?.isTextBased()) {
     const tutorialChannelId = DELIVERY_TUTORIAL_CHANNELS[product] || null;
@@ -278,33 +281,38 @@ async function handleDeliver(interaction) {
       ? `If you need further assistance, the **${productInput} tutorial** is available in <#${tutorialChannelId}>.`
       : 'If you need further assistance, contact staff in this ticket.';
 
+    const deliveryFields = [
+      {
+        name: '1. Check Your Email',
+        value: 'Your key was delivered to the email used to purchase. Check that inbox for your key.'
+      },
+      {
+        name: '2. Download the Loader',
+        value: `[Download from TheHudsonShop.com](${DOWNLOADS_URL})\nLog into your account with the email used to purchase, then download the loader.`
+      },
+      {
+        name: '3. Please Vouch',
+        value: `Once everything is working, please leave a vouch in <#${VOUCHES_CHANNEL_ID}>.`
+      },
+      {
+        name: 'Need Help?',
+        value: tutorialText
+      }
+    ];
+
+    if (orderId) {
+      deliveryFields.push({
+        name: 'Order ID',
+        value: orderId,
+        inline: true
+      });
+    }
+
     const embed = new EmbedBuilder()
       .setColor(0x57F287)
       .setTitle('✅ Payment Accepted / Product Delivered')
       .setDescription(`<@${user.id}>, your **${productInput}** purchase has been delivered.`)
-      .addFields(
-        {
-          name: '1. Check Your Email',
-          value: 'Your key was delivered to the email used to purchase. Check that inbox for your key.'
-        },
-        {
-          name: '2. Download the Loader',
-          value: `[Download from TheHudsonShop.com](${DOWNLOADS_URL})\nLog into your account with the email used to purchase, then download the loader.`
-        },
-        {
-          name: '3. Please Vouch',
-          value: `Once everything is working, please leave a vouch in <#${VOUCHES_CHANNEL_ID}>.`
-        },
-        {
-          name: 'Need Help?',
-          value: tutorialText
-        },
-        {
-          name: 'Order ID',
-          value: orderId,
-          inline: true
-        }
-      )
+      .addFields(deliveryFields)
       .setFooter({ text: 'The Hudson Shop • Thank you for your purchase!' })
       .setTimestamp();
 
@@ -324,15 +332,18 @@ async function handleDeliver(interaction) {
     }).catch(() => null);
   }
 
+  const logFields = [
+    { name: 'Product', value: productInput, inline: true },
+    { name: 'Customer Role', value: `<@&${settings.customerRoleId}>`, inline: true },
+    { name: 'Product Role', value: `<@&${productRoleId}>`, inline: true }
+  ];
+  if (orderId) logFields.push({ name: 'Order ID', value: orderId, inline: true });
+
   return sendLog(client, store, interaction.guildId, {
-    title: 'Order delivered',
-    description: `<@${interaction.user.id}> approved order **${orderId}** for <@${user.id}>.`,
+    title: 'Product delivered',
+    description: `<@${interaction.user.id}> delivered **${productInput}** to <@${user.id}>.`,
     color: 0x57F287,
-    fields: [
-      { name: 'Product', value: productInput, inline: true },
-      { name: 'Customer Role', value: `<@&${settings.customerRoleId}>`, inline: true },
-      { name: 'Product Role', value: `<@&${productRoleId}>`, inline: true }
-    ]
+    fields: logFields
   });
 }
 
