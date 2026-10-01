@@ -21,6 +21,7 @@ const {
   postTicketPanel,
   isTicketChannel,
   onTicketChannelCreated,
+  startTicketWatcher,
   handleTicketButton,
   handleTicketModal,
   processClaim
@@ -443,12 +444,14 @@ client.once(Events.ClientReady, async () => {
   console.log(`Logged in as ${client.user.tag}.`);
   client.user.setActivity('TheHudsonShop.com', { type: ActivityType.Watching });
   startAnnouncementScheduler(client, store);
+  startTicketWatcher(client, store);
   for (const guildId of client.guilds.cache.keys()) await registerGuildCommands(guildId);
 });
 
 client.on('guildCreate', (guild) => registerGuildCommands(guild.id));
 client.on('channelCreate', (channel) => onTicketChannelCreated(channel, store));
 client.on('threadCreate', (thread) => onTicketChannelCreated(thread, store));
+client.on('threadUpdate', (_oldThread, newThread) => onTicketChannelCreated(newThread, store));
 client.on('guildMemberAdd', (member) => sendWelcome(member, store).catch((err) => console.error('[welcome]', err.message)));
 client.on('messageCreate', async (message) => {
   await handleJoinSystemMessage(message, store).catch((err) => console.error('[welcome-system]', err.message));
