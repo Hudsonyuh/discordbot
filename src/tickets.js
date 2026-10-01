@@ -33,12 +33,14 @@ function ticketButtons() {
   );
 }
 
-async function postTicketPanel(channel) {
-  return channel.send({
+async function postTicketPanel(channel, store) {
+  const message = await channel.send({
     embeds: [ticketEmbed()],
     components: [ticketButtons()],
     allowedMentions: { parse: [] }
   });
+  if (store) await store.setTicketPanel(channel.guild.id, channel.id, message.id);
+  return message;
 }
 
 function isTicketChannel(channel, settings) {
@@ -46,8 +48,6 @@ function isTicketChannel(channel, settings) {
 
   if (channel.isThread?.()) {
     if (settings.ticketParentChannelIds?.includes(channel.parentId)) return true;
-    const parentName = channel.parent?.name || '';
-    if (/purchase|ticket|support|order/i.test(parentName)) return true;
   }
 
   if (channel.parentId && settings.ticketCategoryIds?.includes(channel.parentId)) return true;
@@ -66,9 +66,8 @@ function messageHasTicketPanel(message) {
 }
 
 async function panelAlreadyExists(channel) {
-  const messages = await channel.messages?.fetch?.({ limit: 25 }).catch(() => null);
-  if (!messages) return false;
-  return messages.some((message) => messageHasTicketPanel(message));
+  const messages = await channel.messages.fetch({ limit: 100, cache: false });
+  return messages.find((message) => message.author.id === channel.client.user.id && messageHasTicketPanel(message));
 }
 
 async function prepareThread(channel) {
@@ -95,16 +94,17 @@ async function onTicketChannelCreated(channel, store) {
 
   const settings = store.getSettings(channel.guild.id);
   if (!settings.ticketWelcome || !isTicketChannel(channel, settings)) return;
-  if (recentlyPosted.has(channel.id)) return;
+  if (channel.archived || store.getTicketPanel(channel.guild.id, channel.id) || recentlyPosted.has(channel.id)) return;
 
   recentlyPosted.add(channel.id);
   setTimeout(() => recentlyPosted.delete(channel.id), 30_000).unref?.();
 
   try {
     await prepareThread(channel);
-    if (await panelAlreadyExists(channel)) return;
+    const existing = await panelAlreadyExists(channel);
+    if (existing) return await store.setTicketPanel(channel.guild.id, channel.id, existing.id);
 
-    await postTicketPanel(channel);
+    await postTicketPanel(channel, store);
     console.log(
       '[ticket-panel]',
       `posted channel=${channel.id}`,
@@ -153,26 +153,39 @@ async function scanTicketParents(client, store) {
 }
 
 function startTicketWatcher(client, store) {
-  setTimeout(() => scanTicketParents(client, store).catch((err) => console.error('[ticket-scan]', err.message)), 4_000).unref?.();
+  const initial = setTimeout(async () => {
+    for (const guild of client.guilds.cache.values()) {
+      const settings = store.getSettings(guild.id);
+      if (!settings.ticketWelcome || !settings.ticketCategoryIds.length) continue;
+      const channels = await guild.channels.fetch().catch(() => null);
+      for (const channel of channels?.values() || []) {
+        if (channel && settings.ticketCategoryIds.includes(channel.parentId)) await onTicketChannelCreated(channel, store);
+      }
+    }
+    await scanTicketParents(client, store).catch((err) => console.error('[ticket-scan]', err.message));
+  }, 4_000);
+  initial.unref();
 
-  setInterval(
+  const timer = setInterval(
     () => scanTicketParents(client, store).catch((err) => console.error('[ticket-scan]', err.message)),
-    10_000
-  ).unref?.();
+    60_000
+  );
+  timer.unref();
+  return () => { clearTimeout(initial); clearInterval(timer); };
 }
 
 function maskedOrder(orderId) {
   const s = String(orderId);
-  return s.length <= 8 ? s : `••••${s.slice(-6)}`;
+  return s.length <= 4 ? '••••' : `••••${s.slice(-4)}`;
 }
 
 async function processClaim({ interaction, orderId, client, store, publicConfirmation = false }) {
   const normalizedOrder = String(orderId || '').trim().toUpperCase();
-  if (normalizedOrder.length < 3) {
+  if (!/^[A-Z0-9][A-Z0-9_-]{2,99}$/.test(normalizedOrder)) {
     return interaction.editReply({ content: 'Enter a valid order ID from your Hudson Shop receipt.' });
   }
 
-  const existing = store.getClaim(normalizedOrder);
+  const existing = store.getClaim(normalizedOrder, interaction.guildId);
   if (existing) {
     return interaction.editReply({
       content: existing.userId === interaction.user.id
@@ -245,7 +258,7 @@ async function handleTicketButton(interaction, store) {
   if (interaction.customId === 'hudson_ticket_support') {
     const modal = new ModalBuilder().setCustomId('hudson_support_modal').setTitle('Hudson Shop Support');
     const product = new TextInputBuilder().setCustomId('product').setLabel('What product do you need help with?').setStyle(TextInputStyle.Short).setMaxLength(100).setRequired(true);
-    const issue = new TextInputBuilder().setCustomId('issue').setLabel('What is happening?').setStyle(TextInputStyle.Paragraph).setMaxLength(1000).setRequired(true);
+    const issue = new TextInputBuilder().setCustomId('issue').setLabel('What is happening?').setPlaceholder('Include the error and game version. Do not include passwords or license keys.').setStyle(TextInputStyle.Paragraph).setMaxLength(1000).setRequired(true);
     const tried = new TextInputBuilder().setCustomId('tried').setLabel('What have you already tried?').setStyle(TextInputStyle.Paragraph).setMaxLength(700).setRequired(false);
 
     modal.addComponents(
@@ -305,7 +318,7 @@ async function handleTicketModal(interaction, client, store) {
       orderId,
       client,
       store,
-      publicConfirmation: true
+      publicConfirmation: isTicketChannel(interaction.channel, store.getSettings(interaction.guildId))
     });
   }
 }

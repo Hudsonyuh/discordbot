@@ -15,7 +15,11 @@ const {
   Events
 } = require('discord.js');
 const { DataStore } = require('./store');
-const { cleanAmount, clearPreserveChannel, recreateChannel } = require('./cleaner');
+const { cleanAmount, clearPreserveChannel, recreateChannel, assertCleanPermissions } = require('./cleaner');
+const { handleFaqMessage, handleFaqCommand } = require('./faq');
+const { requirePermission } = require('./permissions');
+const { createDeliveryHandler } = require('./delivery');
+const { ShopClient } = require('./shop');
 const { handleAutoMod, normalizeDomain } = require('./automod');
 const {
   postTicketPanel,
@@ -36,7 +40,10 @@ if (!process.env.DISCORD_TOKEN) {
   process.exit(1);
 }
 
-const store = new DataStore(path.join(__dirname, '..', 'data', 'db.json'));
+const store = new DataStore(path.join(process.env.DATA_DIR || path.join(__dirname, '..', 'data'), 'db.json'));
+const stopTasks = [];
+let webServer;
+let shuttingDown = false;
 const intents = [
   GatewayIntentBits.Guilds,
   GatewayIntentBits.GuildMessages,
@@ -45,7 +52,9 @@ const intents = [
 if (String(process.env.ENABLE_MEMBER_INTENT).toLowerCase() === 'true') {
   intents.push(GatewayIntentBits.GuildMembers);
 }
-const client = new Client({ intents });
+const client = new Client({ intents, allowedMentions: { parse: [], repliedUser: false } });
+const shop = new ShopClient();
+const handleDeliver = createDeliveryHandler(client, store, shop);
 
 async function registerGuildCommands(guildId) {
   if (!process.env.DISCORD_CLIENT_ID) {
@@ -62,40 +71,32 @@ async function registerGuildCommands(guildId) {
   }
 }
 
-function isStaff(interaction) {
-  if (!interaction.guildId || !interaction.member) return false;
-  const permissions = interaction.memberPermissions;
-  if (permissions?.has(PermissionFlagsBits.Administrator) || permissions?.has(PermissionFlagsBits.ManageGuild) || permissions?.has(PermissionFlagsBits.ManageMessages)) return true;
-  const staffRoleId = store.getSettings(interaction.guildId).staffRoleId;
-  return Boolean(staffRoleId && interaction.member.roles?.cache?.has(staffRoleId));
-}
-
-async function denyUnlessStaff(interaction) {
-  if (isStaff(interaction)) return false;
-  await interaction.reply({ content: 'You do not have permission to use that staff command.', ephemeral: true });
-  return true;
+async function denyUnlessStaff(interaction, permission) {
+  const required = permission || ({ clean: PermissionFlagsBits.ManageMessages, 'clear-all': PermissionFlagsBits.ManageChannels, deliver: PermissionFlagsBits.ManageRoles, 'product-role': PermissionFlagsBits.ManageRoles }[interaction.commandName] || PermissionFlagsBits.ManageGuild);
+  return !await requirePermission(interaction, required, store);
 }
 
 function normalizeProduct(input) {
   return String(input || '').trim().toLowerCase().replace(/\s+/g, ' ');
 }
 
-const DELIVERY_TUTORIAL_CHANNELS = {
-  'among us': '1521722099260194889',
-  amongus: '1521722099260194889',
-  roblox: '1520614681444618291',
-  meccha: '1525293094319296572',
-  minecraft: '1519048919034630184',
-  discord: '1288443828495323147'
-};
-
-const VOUCHES_CHANNEL_ID = '1274623501416005667';
-const DOWNLOADS_URL = 'https://thehudsonshop.com/downloads';
 
 async function handleSetup(interaction) {
   if (await denyUnlessStaff(interaction)) return;
   const sub = interaction.options.getSubcommand();
   const guildId = interaction.guildId;
+
+  if (sub === 'tutorial-channel') {
+    const product = normalizeProduct(interaction.options.getString('product', true));
+    const channel = interaction.options.getChannel('channel', true);
+    await store.updateSettings(guildId, { tutorialChannels: { ...store.getSettings(guildId).tutorialChannels, [product]: channel.id } });
+    return interaction.reply({ content: `Tutorial for **${product}** set to <#${channel.id}>.`, ephemeral: true });
+  }
+  if (sub === 'vouches-channel') {
+    const channel = interaction.options.getChannel('channel', true);
+    await store.updateSettings(guildId, { vouchesChannelId: channel.id });
+    return interaction.reply({ content: `Vouches channel set to <#${channel.id}>.`, ephemeral: true });
+  }
 
   if (sub === 'ticket-category') {
     const category = interaction.options.getChannel('category', true);
@@ -232,121 +233,6 @@ async function handleProductRoleCommand(interaction) {
   }
 }
 
-async function handleDeliver(interaction) {
-  if (await denyUnlessStaff(interaction)) return;
-  await interaction.deferReply({ ephemeral: true });
-
-  const user = interaction.options.getUser('member', true);
-  const rawOrderId = interaction.options.getString('order-id');
-  const orderId = rawOrderId ? rawOrderId.trim().toUpperCase() : null;
-  const productInput = interaction.options.getString('product', true);
-  const product = normalizeProduct(productInput);
-  const settings = store.getSettings(interaction.guildId);
-  const claim = orderId ? store.getClaim(orderId) : null;
-
-  if (!settings.customerRoleId) return interaction.editReply('❌ Set the Customer role first with **/setup customer-role**.');
-
-  const productRoleId = settings.productRoles?.[product];
-  if (!productRoleId) return interaction.editReply(`❌ No Discord role is mapped to **${productInput}**. Use **/product-role set** first.`);
-
-  const member = await interaction.guild.members.fetch(user.id).catch(() => null);
-  if (!member) return interaction.editReply('❌ I could not find that member in this server.');
-
-  try {
-    const reason = orderId
-      ? `Delivered ${productInput} • order ${orderId} • by ${interaction.user.tag}`
-      : `Delivered ${productInput} by ${interaction.user.tag}`;
-    await member.roles.add([settings.customerRoleId, productRoleId], reason);
-  } catch (err) {
-    return interaction.editReply(`❌ I couldn't assign the roles. Make sure my bot role is above the Customer and product roles and has **Manage Roles**. Discord error: ${err.message}`);
-  }
-
-  if (claim && claim.guildId === interaction.guildId && claim.userId === user.id) {
-    await store.updateClaim(orderId, {
-      status: 'delivered',
-      product,
-      customerRoleId: settings.customerRoleId,
-      productRoleId,
-      deliveredBy: interaction.user.id,
-      deliveredAt: new Date().toISOString()
-    });
-  }
-
-  const deliveryReference = orderId ? ` for order **${orderId}**` : '';
-  await interaction.editReply(`✅ **${productInput}** delivered to <@${user.id}>${deliveryReference}. Customer + product roles were assigned.`);
-
-  if (interaction.channel?.isTextBased()) {
-    const tutorialChannelId = DELIVERY_TUTORIAL_CHANNELS[product] || null;
-    const tutorialText = tutorialChannelId
-      ? `If you need further assistance, the **${productInput} tutorial** is available in <#${tutorialChannelId}>.`
-      : 'If you need further assistance, contact staff in this ticket.';
-
-    const deliveryFields = [
-      {
-        name: '1. Check Your Email',
-        value: 'Your key was delivered to the email used to purchase. Check that inbox for your key.'
-      },
-      {
-        name: '2. Download the Loader',
-        value: `[Download from TheHudsonShop.com](${DOWNLOADS_URL})\nLog into your account with the email used to purchase, then download the loader.`
-      },
-      {
-        name: '3. Please Vouch',
-        value: `Once everything is working, please leave a vouch in <#${VOUCHES_CHANNEL_ID}>.`
-      },
-      {
-        name: 'Need Help?',
-        value: tutorialText
-      }
-    ];
-
-    if (orderId) {
-      deliveryFields.push({
-        name: 'Order ID',
-        value: orderId,
-        inline: true
-      });
-    }
-
-    const embed = new EmbedBuilder()
-      .setColor(0x57F287)
-      .setTitle('✅ Payment Accepted / Product Delivered')
-      .setDescription(`<@${user.id}>, your **${productInput}** purchase has been delivered.`)
-      .addFields(deliveryFields)
-      .setFooter({ text: 'The Hudson Shop • Thank you for your purchase!' })
-      .setTimestamp();
-
-    const downloadRow = new ActionRowBuilder().addComponents(
-      new ButtonBuilder()
-        .setStyle(ButtonStyle.Link)
-        .setURL(DOWNLOADS_URL)
-        .setLabel('Download Loader')
-        .setEmoji('⬇️')
-    );
-
-    await interaction.channel.send({
-      content: `<@${user.id}>`,
-      embeds: [embed],
-      components: [downloadRow],
-      allowedMentions: { users: [user.id] }
-    }).catch(() => null);
-  }
-
-  const logFields = [
-    { name: 'Product', value: productInput, inline: true },
-    { name: 'Customer Role', value: `<@&${settings.customerRoleId}>`, inline: true },
-    { name: 'Product Role', value: `<@&${productRoleId}>`, inline: true }
-  ];
-  if (orderId) logFields.push({ name: 'Order ID', value: orderId, inline: true });
-
-  return sendLog(client, store, interaction.guildId, {
-    title: 'Product delivered',
-    description: `<@${interaction.user.id}> delivered **${productInput}** to <@${user.id}>.`,
-    color: 0x57F287,
-    fields: logFields
-  });
-}
-
 async function handleAutomodCommand(interaction) {
   if (await denyUnlessStaff(interaction)) return;
   const sub = interaction.options.getSubcommand();
@@ -397,11 +283,12 @@ async function handleClearAllCommand(interaction) {
   const channel = interaction.channel;
   if (!channel?.isTextBased() || !channel.messages) return interaction.reply({ content: 'This command can only be used in a normal text/announcement channel.', ephemeral: true });
   const method = interaction.options.getString('method', true);
+  assertCleanPermissions(channel, method === 'recreate');
   const warning = method === 'recreate'
     ? 'This will clone this channel, delete the original, and leave the new channel completely empty. **The channel ID changes, and channel-specific webhooks/integrations may need updating.**'
     : 'This keeps the same channel ID and deletes the entire message history. Old messages are removed individually, so a very large channel can take a while.';
   const row = new ActionRowBuilder().addComponents(
-    new ButtonBuilder().setCustomId(`hudson_clear_confirm:${interaction.user.id}:${method}`).setLabel('Confirm Clear All').setStyle(ButtonStyle.Danger),
+    new ButtonBuilder().setCustomId(`hudson_clear_confirm:${interaction.user.id}:${method}:${Date.now()}`).setLabel('Confirm Clear All').setStyle(ButtonStyle.Danger),
     new ButtonBuilder().setCustomId(`hudson_clear_cancel:${interaction.user.id}`).setLabel('Cancel').setStyle(ButtonStyle.Secondary)
   );
   return interaction.reply({ content: `⚠️ **Clear all messages in #${channel.name}?**\n${warning}`, components: [row], ephemeral: true });
@@ -416,23 +303,29 @@ async function handleClearButton(interaction) {
     return interaction.update({ content: 'Clear cancelled.', components: [] });
   }
 
+  if (await denyUnlessStaff(interaction, PermissionFlagsBits.ManageChannels)) return;
+  const createdAt = Number(parts[3]);
+  if (!createdAt || Date.now() - createdAt > 120_000) return interaction.update({ content: 'This confirmation expired. Run /clear-all again.', components: [] });
+
   const method = parts[2];
+  if (!['preserve', 'recreate'].includes(method)) return;
   const channel = interaction.channel;
   if (!channel?.isTextBased() || !channel.messages) return interaction.update({ content: 'This channel can no longer be cleared.', components: [] });
 
   if (method === 'recreate') {
     await interaction.update({ content: 'Resetting the channel…', components: [] });
+    const clone = await recreateChannel(channel, `Hudson /clear-all by ${interaction.user.tag}`, newChannel => store.remapChannel(interaction.guildId, channel.id, newChannel.id));
+    await interaction.editReply({ content: `Channel reset complete: <#${clone.id}>.`, components: [] }).catch(() => {});
     await sendLog(client, store, interaction.guildId, {
       title: 'Channel reset',
       description: `<@${interaction.user.id}> reset #${channel.name} by recreating it.`,
       color: 0xED4245
     });
-    await recreateChannel(channel, `Hudson /clear-all by ${interaction.user.tag}`);
     return;
   }
 
   await interaction.update({ content: 'Clearing the entire channel while preserving its ID…', components: [] });
-  const result = await clearPreserveChannel(channel);
+  const result = await clearPreserveChannel(channel, cleanupProgress(interaction));
   await interaction.editReply({ content: `✅ Finished. Deleted **${result.deleted}** messages${result.failed ? `; **${result.failed}** could not be deleted` : ''}.`, components: [] }).catch(() => null);
   await sendLog(client, store, interaction.guildId, {
     title: 'Channel cleared',
@@ -440,6 +333,15 @@ async function handleClearButton(interaction) {
     color: 0xED4245,
     fields: [{ name: 'Deleted', value: String(result.deleted), inline: true }, { name: 'Failed', value: String(result.failed), inline: true }]
   });
+}
+
+function cleanupProgress(interaction) {
+  let lastUpdate = Date.now();
+  return async ({ deleted, failed }) => {
+    if (Date.now() - lastUpdate < 5000) return;
+    lastUpdate = Date.now();
+    await interaction.editReply({ content: `Cleaning… **${deleted}** removed; **${failed}** failed. Older messages take longer. Completion is also recorded in the log channel.`, components: [] }).catch(() => {});
+  };
 }
 
 async function handleCommand(interaction) {
@@ -451,8 +353,8 @@ async function handleCommand(interaction) {
     const amount = interaction.options.getInteger('amount', true);
     const includePinned = interaction.options.getBoolean('include-pinned') || false;
     await interaction.deferReply({ ephemeral: true });
-    const result = await cleanAmount(interaction.channel, amount, includePinned);
-    await interaction.editReply(`✅ Deleted **${result.deleted}** of **${result.found}** found messages${result.failed ? ` (${result.failed} failed)` : ''}.${!includePinned ? ' Pinned messages were kept.' : ''}`);
+    const result = await cleanAmount(interaction.channel, amount, includePinned, cleanupProgress(interaction));
+    await interaction.editReply(`✅ Deleted **${result.deleted}** of **${result.found}** found messages${result.failed ? ` (${result.failed} failed)` : ''}.${!includePinned ? ' Pinned messages were kept.' : ''}`).catch(() => {});
     return sendLog(client, store, interaction.guildId, {
       title: 'Messages cleaned',
       description: `<@${interaction.user.id}> used /clean in <#${interaction.channelId}>.`,
@@ -464,6 +366,7 @@ async function handleCommand(interaction) {
   if (interaction.commandName === 'deliver') return handleDeliver(interaction);
   if (interaction.commandName === 'product-role') return handleProductRoleCommand(interaction);
   if (interaction.commandName === 'welcome') return handleWelcomeCommand(interaction);
+  if (interaction.commandName === 'faq') return handleFaqCommand(interaction, store);
 
   if (interaction.commandName === 'claim') {
     const orderId = interaction.options.getString('order-id', true);
@@ -476,8 +379,9 @@ async function handleCommand(interaction) {
   if (interaction.commandName === 'ticket-panel') {
     if (await denyUnlessStaff(interaction)) return;
     if (!interaction.channel?.isTextBased()) return interaction.reply({ content: 'Use this in a text channel.', ephemeral: true });
-    await postTicketPanel(interaction.channel);
-    return interaction.reply({ content: '✅ Ticket menu posted.', ephemeral: true });
+    await interaction.deferReply({ ephemeral: true });
+    await postTicketPanel(interaction.channel, store);
+    return interaction.editReply({ content: '✅ Ticket menu posted.' });
   }
 
   if (interaction.commandName === 'announce') {
@@ -492,35 +396,53 @@ function startWebServer() {
   const port = Number(process.env.PORT || process.env.WEB_PORT || 3000);
   const server = http.createServer((req, res) => {
     if (req.method === 'GET' && req.url === '/health') {
-      res.writeHead(200, { 'content-type': 'application/json' });
-      return res.end(JSON.stringify({ ok: true, discordReady: client.isReady() }));
+      const ready = client.isReady() && !shuttingDown;
+      res.writeHead(ready ? 200 : 503, { 'content-type': 'application/json' });
+      return res.end(JSON.stringify({ ok: ready, discordReady: client.isReady(), uptimeSeconds: Math.floor(process.uptime()) }));
     }
     res.writeHead(404);
     return res.end('Not found');
   });
   server.listen(port, '0.0.0.0', () => console.log(`Health server listening on port ${port}.`));
+  server.on('error', error => { console.error('[health]', error.message); shutdown(1); });
+  return server;
 }
 
 client.once(Events.ClientReady, async () => {
   console.log(`Logged in as ${client.user.tag}.`);
   client.user.setActivity('TheHudsonShop.com', { type: ActivityType.Watching });
-  startAnnouncementScheduler(client, store);
-  startTicketWatcher(client, store);
-  for (const guildId of client.guilds.cache.keys()) await registerGuildCommands(guildId);
+  stopTasks.push(startAnnouncementScheduler(client, store), startTicketWatcher(client, store));
+  if (process.env.AUTO_REGISTER_COMMANDS !== 'false') {
+    for (const guildId of client.guilds.cache.keys()) {
+      if (!process.env.DISCORD_GUILD_ID || process.env.DISCORD_GUILD_ID === guildId) await registerGuildCommands(guildId);
+    }
+  }
 });
 
-client.on('guildCreate', (guild) => registerGuildCommands(guild.id));
+client.on('guildCreate', (guild) => {
+  if (process.env.AUTO_REGISTER_COMMANDS !== 'false' && (!process.env.DISCORD_GUILD_ID || process.env.DISCORD_GUILD_ID === guild.id)) registerGuildCommands(guild.id);
+});
 client.on('channelCreate', (channel) => onTicketChannelCreated(channel, store));
 client.on('threadCreate', (thread) => onTicketChannelCreated(thread, store));
 client.on('threadUpdate', (_oldThread, newThread) => onTicketChannelCreated(newThread, store));
+client.on('channelDelete', channel => {
+  if (channel.guild && store.getTicketPanel(channel.guild.id, channel.id)) store.setTicketPanel(channel.guild.id, channel.id, null).catch(error => console.error('[ticket-delete]', error.message));
+});
 client.on('guildMemberAdd', (member) => sendWelcome(member, store).catch((err) => console.error('[welcome]', err.message)));
 client.on('messageCreate', async (message) => {
   await handleJoinSystemMessage(message, store).catch((err) => console.error('[welcome-system]', err.message));
-  await handleAutoMod(message, client, store).catch((err) => console.error('[automod]', err));
+  const flagged = await handleAutoMod(message, client, store).catch((err) => { console.error('[automod]', err); return true; });
+  if (!flagged) await handleFaqMessage(message, store).catch(err => console.error('[faq]', err.message));
 });
+client.on('messageUpdate', (_previous, message) => {
+  if (!message.partial) handleAutoMod(message, client, store).catch(error => console.error('[automod-edit]', error.message));
+});
+client.on('error', error => console.error('[discord]', error.message));
 
 client.on('interactionCreate', async (interaction) => {
   try {
+    if (shuttingDown) return;
+    if (!interaction.inGuild()) return interaction.reply({ content: 'Use this bot inside a server.', ephemeral: true });
     if (interaction.isChatInputCommand()) return await handleCommand(interaction);
     if (interaction.isButton()) {
       if (interaction.customId.startsWith('hudson_clear_')) return await handleClearButton(interaction);
@@ -529,17 +451,37 @@ client.on('interactionCreate', async (interaction) => {
     if (interaction.isModalSubmit() && interaction.customId.startsWith('hudson_')) return await handleTicketModal(interaction, client, store);
   } catch (err) {
     console.error('[interaction]', err);
-    const payload = { content: 'Something went wrong while running that action. Check the bot console/log channel for details.', ephemeral: true };
-    if (interaction.deferred || interaction.replied) await interaction.followUp(payload).catch(() => null);
+    const payload = { content: `Action could not finish: ${err.message}`.slice(0, 1900), ephemeral: true, allowedMentions: { parse: [] } };
+    if (interaction.deferred) await interaction.editReply({ content: payload.content, components: [], allowedMentions: payload.allowedMentions }).catch(() => null);
+    else if (interaction.replied) await interaction.followUp(payload).catch(() => null);
     else await interaction.reply(payload).catch(() => null);
   }
 });
 
 process.on('unhandledRejection', (err) => console.error('[unhandledRejection]', err));
-process.on('uncaughtException', (err) => console.error('[uncaughtException]', err));
+async function shutdown(code = 0) {
+  if (shuttingDown) return;
+  shuttingDown = true;
+  stopTasks.forEach(stop => stop());
+  const deadline = setTimeout(() => process.exit(code || 1), 10_000);
+  deadline.unref();
+  try {
+    await client.destroy();
+    await store._writeQueue;
+    if (webServer) await new Promise(resolve => webServer.close(resolve));
+  } catch (error) { console.error('[shutdown]', error.message); code = 1; }
+  process.exit(code);
+}
+process.on('SIGTERM', () => shutdown());
+process.on('SIGINT', () => shutdown());
+process.on('uncaughtException', err => { console.error('[uncaughtException]', err); shutdown(1); });
 
 (async () => {
   await store.init();
-  startWebServer();
+  if (shop.enabled) {
+    shop.checkConnection().then(() => console.log('[shop] Admin connection verified (read-only).'))
+      .catch(error => console.error('[shop] Connection check failed:', error.message));
+  }
+  webServer = startWebServer();
   await client.login(process.env.DISCORD_TOKEN);
-})();
+})().catch(error => { console.error('[startup]', error.message); shutdown(1); });

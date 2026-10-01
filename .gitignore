@@ -3,3 +3,8 @@ node_modules/
 data/db.json
 data/db.json.tmp
 npm-debug.log*
+.freebuff/
+.deploy-checkout/
+.local-tools/
+data/*.bak
+data/*.backup*

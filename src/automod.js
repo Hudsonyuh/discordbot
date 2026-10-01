@@ -2,6 +2,10 @@ const { PermissionFlagsBits } = require('discord.js');
 const { sendLog } = require('./logger');
 
 const activity = new Map();
+setInterval(() => {
+  const cutoff = Date.now() - 20_000;
+  for (const [key, entries] of activity) if (!entries.some(entry => entry.t > cutoff)) activity.delete(key);
+}, 60_000).unref();
 const URL_RE = /https?:\/\/[^\s<>()]+/gi;
 const SAFE_MRBEAST_DOMAINS = new Set(['youtube.com', 'www.youtube.com', 'youtu.be', 'instagram.com', 'www.instagram.com', 'tiktok.com', 'www.tiktok.com', 'x.com', 'twitter.com']);
 
@@ -40,7 +44,7 @@ function spamReason(message) {
   const normalized = message.content.trim().toLowerCase().replace(/\s+/g, ' ');
   const entry = activity.get(key) || [];
   entry.push({ t: now, content: normalized });
-  const kept = entry.filter((x) => now - x.t <= 20000);
+  const kept = entry.filter((x) => now - x.t <= 20000).slice(-30);
   activity.set(key, kept);
 
   const burst = kept.filter((x) => now - x.t <= 7000).length;
@@ -75,9 +79,9 @@ async function handleAutoMod(message, client, store) {
   if (!reason && message.mentions.users.size + message.mentions.roles.size >= 6) reason = 'Mention spam';
   if (!reason) return;
 
-  await message.delete().catch(() => null);
+  const removed = await message.delete().then(() => true, () => false);
   await sendLog(client, store, message.guild.id, {
-    title: 'AutoMod removed a message',
+    title: removed ? 'AutoMod removed a message' : 'AutoMod could not remove a flagged message',
     description: reason,
     color: 0xED4245,
     fields: [
@@ -86,6 +90,7 @@ async function handleAutoMod(message, client, store) {
       { name: 'Content', value: (message.content || '(empty)').slice(0, 900) }
     ]
   });
+  return true;
 }
 
 module.exports = { handleAutoMod, normalizeDomain };
