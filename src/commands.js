@@ -36,7 +36,17 @@ function buildCommands() {
       .setDescription('Accept a pending claim and give the customer + purchased-product roles.')
       .addUserOption((o) => o.setName('member').setDescription('Customer to deliver to').setRequired(true))
       .addStringOption((o) => o.setName('order-id').setDescription('Pending Hudson Shop order ID').setMinLength(3).setMaxLength(100).setRequired(true))
-      .addStringOption((o) => o.setName('product').setDescription('Configured product name, e.g. Among Us').setMinLength(1).setMaxLength(100).setRequired(true))
+      .addStringOption((o) => o
+        .setName('product')
+        .setDescription('Product being delivered')
+        .setRequired(true)
+        .addChoices(
+          { name: 'Among Us', value: 'Among Us' },
+          { name: 'Roblox', value: 'Roblox' },
+          { name: 'Meccha', value: 'Meccha' },
+          { name: 'Minecraft', value: 'Minecraft' },
+          { name: 'Discord', value: 'Discord' }
+        ))
       .setDefaultMemberPermissions(PermissionFlagsBits.ManageRoles),
 
     new SlashCommandBuilder()
