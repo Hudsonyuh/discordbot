@@ -10,6 +10,7 @@ const {
 const { sendLog } = require('./logger');
 
 const recentlyPosted = new Set();
+let watcherRunning = false;
 
 function ticketEmbed() {
   return new EmbedBuilder()
@@ -33,29 +34,131 @@ function ticketButtons() {
 }
 
 async function postTicketPanel(channel) {
-  return channel.send({ embeds: [ticketEmbed()], components: [ticketButtons()], allowedMentions: { parse: [] } });
+  return channel.send({
+    embeds: [ticketEmbed()],
+    components: [ticketButtons()],
+    allowedMentions: { parse: [] }
+  });
 }
 
 function isTicketChannel(channel, settings) {
   if (!channel?.guild || !channel.isTextBased()) return false;
+
   if (channel.isThread?.()) {
     if (settings.ticketParentChannelIds?.includes(channel.parentId)) return true;
     const parentName = channel.parent?.name || '';
     if (/purchase|ticket|support|order/i.test(parentName)) return true;
   }
+
   if (channel.parentId && settings.ticketCategoryIds?.includes(channel.parentId)) return true;
   if (!channel.parentId && settings.uncategorizedTickets) return true;
+
   return false;
+}
+
+function messageHasTicketPanel(message) {
+  for (const row of message.components || []) {
+    for (const component of row.components || []) {
+      if (component.customId === 'hudson_ticket_claim') return true;
+    }
+  }
+  return false;
+}
+
+async function panelAlreadyExists(channel) {
+  const messages = await channel.messages?.fetch?.({ limit: 25 }).catch(() => null);
+  if (!messages) return false;
+  return messages.some((message) => messageHasTicketPanel(message));
+}
+
+async function prepareThread(channel) {
+  if (!channel.isThread?.()) return;
+
+  if (channel.archived && channel.manageable) {
+    await channel.setArchived(false, 'Hudson Shop ticket integration').catch(() => null);
+  }
+
+  if (channel.joinable) {
+    await channel.join().catch((err) => {
+      console.error(
+        '[ticket-thread-join]',
+        `thread=${channel.id}`,
+        `parent=${channel.parentId}`,
+        err.code || err.message
+      );
+    });
+  }
 }
 
 async function onTicketChannelCreated(channel, store) {
   if (!channel?.guild || !channel.isTextBased()) return;
+
   const settings = store.getSettings(channel.guild.id);
   if (!settings.ticketWelcome || !isTicketChannel(channel, settings)) return;
   if (recentlyPosted.has(channel.id)) return;
+
   recentlyPosted.add(channel.id);
   setTimeout(() => recentlyPosted.delete(channel.id), 30_000).unref?.();
-  setTimeout(() => postTicketPanel(channel).catch((err) => console.error('[ticket-panel]', err.message)), 1500);
+
+  try {
+    await prepareThread(channel);
+    if (await panelAlreadyExists(channel)) return;
+
+    await postTicketPanel(channel);
+    console.log(
+      '[ticket-panel]',
+      `posted channel=${channel.id}`,
+      `parent=${channel.parentId || 'none'}`,
+      `thread=${Boolean(channel.isThread?.())}`
+    );
+  } catch (err) {
+    console.error(
+      '[ticket-panel]',
+      `failed channel=${channel.id}`,
+      `parent=${channel.parentId || 'none'}`,
+      `thread=${Boolean(channel.isThread?.())}`,
+      err.code || err.message
+    );
+  }
+}
+
+async function scanTicketParents(client, store) {
+  if (watcherRunning || !client.isReady()) return;
+  watcherRunning = true;
+
+  try {
+    for (const guild of client.guilds.cache.values()) {
+      const settings = store.getSettings(guild.id);
+      if (!settings.ticketWelcome) continue;
+
+      for (const parentId of settings.ticketParentChannelIds || []) {
+        const parent = await guild.channels.fetch(parentId).catch(() => null);
+        if (!parent?.threads?.fetchActive) continue;
+
+        const active = await parent.threads.fetchActive().catch((err) => {
+          console.error('[ticket-scan]', `parent=${parentId}`, err.code || err.message);
+          return null;
+        });
+
+        if (!active?.threads) continue;
+
+        for (const thread of active.threads.values()) {
+          await onTicketChannelCreated(thread, store);
+        }
+      }
+    }
+  } finally {
+    watcherRunning = false;
+  }
+}
+
+function startTicketWatcher(client, store) {
+  setTimeout(() => scanTicketParents(client, store).catch((err) => console.error('[ticket-scan]', err.message)), 4_000).unref?.();
+
+  setInterval(
+    () => scanTicketParents(client, store).catch((err) => console.error('[ticket-scan]', err.message)),
+    10_000
+  ).unref?.();
 }
 
 function maskedOrder(orderId) {
@@ -65,7 +168,9 @@ function maskedOrder(orderId) {
 
 async function processClaim({ interaction, orderId, client, store, publicConfirmation = false }) {
   const normalizedOrder = String(orderId || '').trim().toUpperCase();
-  if (normalizedOrder.length < 3) return interaction.editReply({ content: 'Enter a valid order ID from your Hudson Shop receipt.' });
+  if (normalizedOrder.length < 3) {
+    return interaction.editReply({ content: 'Enter a valid order ID from your Hudson Shop receipt.' });
+  }
 
   const existing = store.getClaim(normalizedOrder);
   if (existing) {
@@ -86,9 +191,13 @@ async function processClaim({ interaction, orderId, client, store, publicConfirm
   };
 
   const result = await store.claimOrder(normalizedOrder, claim);
-  if (!result.ok) return interaction.editReply({ content: 'That order ID was just submitted by someone else. Please ask staff to review it.' });
+  if (!result.ok) {
+    return interaction.editReply({ content: 'That order ID was just submitted by someone else. Please ask staff to review it.' });
+  }
 
-  await interaction.editReply({ content: '✅ **Claim request submitted.** Staff will manually verify your order ID and handle your product in this ticket.' });
+  await interaction.editReply({
+    content: '✅ **Claim request submitted.** Staff will manually verify your order ID and handle your product in this ticket.'
+  });
 
   if (publicConfirmation && interaction.channel?.isTextBased()) {
     const embed = new EmbedBuilder()
@@ -100,7 +209,11 @@ async function processClaim({ interaction, orderId, client, store, publicConfirm
         { name: 'Status', value: 'Pending staff review', inline: true }
       )
       .setTimestamp();
-    await interaction.channel.send({ embeds: [embed], allowedMentions: { users: [interaction.user.id] } }).catch(() => null);
+
+    await interaction.channel.send({
+      embeds: [embed],
+      allowedMentions: { users: [interaction.user.id] }
+    }).catch(() => null);
   }
 
   await sendLog(client, store, interaction.guildId, {
@@ -121,7 +234,12 @@ async function handleTicketButton(interaction, store) {
     const row = new ActionRowBuilder().addComponents(
       new ButtonBuilder().setStyle(ButtonStyle.Link).setURL(url).setLabel('Open TheHudsonShop.com').setEmoji('🛒')
     );
-    return interaction.reply({ content: 'Ready to purchase? Use the button below. If you have a question before buying, press **Support** on the ticket menu.', components: [row], ephemeral: true });
+
+    return interaction.reply({
+      content: 'Ready to purchase? Use the button below. If you have a question before buying, press **Support** on the ticket menu.',
+      components: [row],
+      ephemeral: true
+    });
   }
 
   if (interaction.customId === 'hudson_ticket_support') {
@@ -129,11 +247,13 @@ async function handleTicketButton(interaction, store) {
     const product = new TextInputBuilder().setCustomId('product').setLabel('What product do you need help with?').setStyle(TextInputStyle.Short).setMaxLength(100).setRequired(true);
     const issue = new TextInputBuilder().setCustomId('issue').setLabel('What is happening?').setStyle(TextInputStyle.Paragraph).setMaxLength(1000).setRequired(true);
     const tried = new TextInputBuilder().setCustomId('tried').setLabel('What have you already tried?').setStyle(TextInputStyle.Paragraph).setMaxLength(700).setRequired(false);
+
     modal.addComponents(
       new ActionRowBuilder().addComponents(product),
       new ActionRowBuilder().addComponents(issue),
       new ActionRowBuilder().addComponents(tried)
     );
+
     return interaction.showModal(modal);
   }
 
@@ -146,6 +266,7 @@ async function handleTicketButton(interaction, store) {
       .setStyle(TextInputStyle.Short)
       .setMaxLength(100)
       .setRequired(true);
+
     modal.addComponents(new ActionRowBuilder().addComponents(orderId));
     return interaction.showModal(modal);
   }
@@ -156,7 +277,9 @@ async function handleTicketModal(interaction, client, store) {
     const product = interaction.fields.getTextInputValue('product');
     const issue = interaction.fields.getTextInputValue('issue');
     const tried = interaction.fields.getTextInputValue('tried') || 'Not provided';
+
     await interaction.reply({ content: '✅ Support details submitted.', ephemeral: true });
+
     const embed = new EmbedBuilder()
       .setColor(0x5865F2)
       .setTitle('Support Request')
@@ -167,13 +290,23 @@ async function handleTicketModal(interaction, client, store) {
         { name: 'Already Tried', value: tried.slice(0, 700) }
       )
       .setTimestamp();
-    return interaction.channel.send({ embeds: [embed], allowedMentions: { users: [interaction.user.id] } });
+
+    return interaction.channel.send({
+      embeds: [embed],
+      allowedMentions: { users: [interaction.user.id] }
+    });
   }
 
   if (interaction.customId === 'hudson_claim_modal') {
     const orderId = interaction.fields.getTextInputValue('order_id');
     await interaction.deferReply({ ephemeral: true });
-    return processClaim({ interaction, orderId, client, store, publicConfirmation: true });
+    return processClaim({
+      interaction,
+      orderId,
+      client,
+      store,
+      publicConfirmation: true
+    });
   }
 }
 
@@ -181,6 +314,8 @@ module.exports = {
   postTicketPanel,
   isTicketChannel,
   onTicketChannelCreated,
+  scanTicketParents,
+  startTicketWatcher,
   handleTicketButton,
   handleTicketModal,
   processClaim
