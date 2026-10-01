@@ -137,7 +137,7 @@ async function deliverProduct(interaction) {
     if (orderId) {
       deliveryFields.push({
         name: 'Order ID',
-        value: `••••${orderId.slice(-4)}`,
+        value: orderId,
         inline: true
       });
     }
