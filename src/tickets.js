@@ -9,6 +9,8 @@ const {
 } = require('discord.js');
 const { sendLog } = require('./logger');
 
+const recentlyPosted = new Set();
+
 function ticketEmbed() {
   return new EmbedBuilder()
     .setColor(0x7628BE)
@@ -34,10 +36,25 @@ async function postTicketPanel(channel) {
   return channel.send({ embeds: [ticketEmbed()], components: [ticketButtons()], allowedMentions: { parse: [] } });
 }
 
+function isTicketChannel(channel, settings) {
+  if (!channel?.guild || !channel.isTextBased()) return false;
+  if (channel.isThread?.()) {
+    if (settings.ticketParentChannelIds?.includes(channel.parentId)) return true;
+    const parentName = channel.parent?.name || '';
+    if (/purchase|ticket|support|order/i.test(parentName)) return true;
+  }
+  if (channel.parentId && settings.ticketCategoryIds?.includes(channel.parentId)) return true;
+  if (!channel.parentId && settings.uncategorizedTickets) return true;
+  return false;
+}
+
 async function onTicketChannelCreated(channel, store) {
-  if (!channel.guild || !channel.isTextBased() || !channel.parentId) return;
+  if (!channel?.guild || !channel.isTextBased()) return;
   const settings = store.getSettings(channel.guild.id);
-  if (!settings.ticketWelcome || !settings.ticketCategoryIds.includes(channel.parentId)) return;
+  if (!settings.ticketWelcome || !isTicketChannel(channel, settings)) return;
+  if (recentlyPosted.has(channel.id)) return;
+  recentlyPosted.add(channel.id);
+  setTimeout(() => recentlyPosted.delete(channel.id), 30_000).unref?.();
   setTimeout(() => postTicketPanel(channel).catch((err) => console.error('[ticket-panel]', err.message)), 1500);
 }
 
@@ -48,15 +65,13 @@ function maskedOrder(orderId) {
 
 async function processClaim({ interaction, orderId, client, store, publicConfirmation = false }) {
   const normalizedOrder = String(orderId || '').trim().toUpperCase();
-  if (normalizedOrder.length < 3) {
-    return interaction.editReply({ content: 'Enter a valid order ID from your Hudson Shop receipt.' });
-  }
+  if (normalizedOrder.length < 3) return interaction.editReply({ content: 'Enter a valid order ID from your Hudson Shop receipt.' });
 
   const existing = store.getClaim(normalizedOrder);
   if (existing) {
     return interaction.editReply({
       content: existing.userId === interaction.user.id
-        ? `You already submitted order **${maskedOrder(normalizedOrder)}** for review.`
+        ? `You already submitted order **${maskedOrder(normalizedOrder)}** for review. Current status: **${existing.status || 'pending'}**.`
         : 'That order ID has already been submitted for review. Please ask staff if you believe this is a mistake.'
     });
   }
@@ -71,13 +86,9 @@ async function processClaim({ interaction, orderId, client, store, publicConfirm
   };
 
   const result = await store.claimOrder(normalizedOrder, claim);
-  if (!result.ok) {
-    return interaction.editReply({ content: 'That order ID was just submitted by someone else. Please ask staff to review it.' });
-  }
+  if (!result.ok) return interaction.editReply({ content: 'That order ID was just submitted by someone else. Please ask staff to review it.' });
 
-  await interaction.editReply({
-    content: '✅ **Claim request submitted.** Staff will manually verify your order ID and handle your product in this ticket.'
-  });
+  await interaction.editReply({ content: '✅ **Claim request submitted.** Staff will manually verify your order ID and handle your product in this ticket.' });
 
   if (publicConfirmation && interaction.channel?.isTextBased()) {
     const embed = new EmbedBuilder()
@@ -168,6 +179,7 @@ async function handleTicketModal(interaction, client, store) {
 
 module.exports = {
   postTicketPanel,
+  isTicketChannel,
   onTicketChannelCreated,
   handleTicketButton,
   handleTicketModal,
