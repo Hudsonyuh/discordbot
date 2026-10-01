@@ -4,9 +4,19 @@ const crypto = require('node:crypto');
 
 const DEFAULT_SETTINGS = {
   ticketCategoryIds: [],
+  ticketParentChannelIds: [],
+  uncategorizedTickets: false,
   logChannelId: null,
   staffRoleId: null,
+  customerRoleId: null,
+  productRoles: {},
   ticketWelcome: true,
+  welcome: {
+    enabled: false,
+    channelId: null,
+    title: 'Welcome to {server}!',
+    message: 'Welcome {user}! You are member **#{memberCount}**. We are glad to have you here.'
+  },
   automodEnabled: true,
   blockedPhrases: ['check my bio', 'check bio', 'free nitro', 'free discord nitro'],
   blockedDomains: [],
@@ -36,13 +46,16 @@ class DataStore {
   _ensureGuild(guildId) {
     if (!this.data.guilds[guildId]) {
       this.data.guilds[guildId] = {
-        settings: { ...DEFAULT_SETTINGS },
+        settings: JSON.parse(JSON.stringify(DEFAULT_SETTINGS)),
         announcements: {}
       };
     }
     const guild = this.data.guilds[guildId];
     guild.settings = { ...DEFAULT_SETTINGS, ...(guild.settings || {}) };
+    guild.settings.welcome = { ...DEFAULT_SETTINGS.welcome, ...(guild.settings.welcome || {}) };
     guild.settings.ticketCategoryIds ||= [];
+    guild.settings.ticketParentChannelIds ||= [];
+    guild.settings.productRoles ||= {};
     guild.settings.blockedPhrases ||= [...DEFAULT_SETTINGS.blockedPhrases];
     guild.settings.blockedDomains ||= [];
     guild.announcements ||= {};
@@ -56,6 +69,7 @@ class DataStore {
   async updateSettings(guildId, patch) {
     const guild = this._ensureGuild(guildId);
     guild.settings = { ...guild.settings, ...patch };
+    if (patch.welcome) guild.settings.welcome = { ...this.getSettings(guildId).welcome, ...patch.welcome };
     await this.save();
     return guild.settings;
   }
@@ -72,6 +86,35 @@ class DataStore {
     await this.save();
   }
 
+  async addTicketParent(guildId, channelId) {
+    const settings = this.getSettings(guildId);
+    if (!settings.ticketParentChannelIds.includes(channelId)) settings.ticketParentChannelIds.push(channelId);
+    await this.save();
+  }
+
+  async removeTicketParent(guildId, channelId) {
+    const settings = this.getSettings(guildId);
+    settings.ticketParentChannelIds = settings.ticketParentChannelIds.filter((id) => id !== channelId);
+    await this.save();
+  }
+
+  async setProductRole(guildId, product, roleId) {
+    const settings = this.getSettings(guildId);
+    const key = String(product).trim().toLowerCase().replace(/\s+/g, ' ');
+    settings.productRoles[key] = roleId;
+    await this.save();
+    return key;
+  }
+
+  async removeProductRole(guildId, product) {
+    const settings = this.getSettings(guildId);
+    const key = String(product).trim().toLowerCase().replace(/\s+/g, ' ');
+    const existed = Boolean(settings.productRoles[key]);
+    delete settings.productRoles[key];
+    if (existed) await this.save();
+    return existed;
+  }
+
   getClaim(orderId) {
     return this.data.claims[String(orderId).toUpperCase()] || null;
   }
@@ -82,6 +125,14 @@ class DataStore {
     this.data.claims[key] = claim;
     await this.save();
     return { ok: true, claim };
+  }
+
+  async updateClaim(orderId, patch) {
+    const key = String(orderId).toUpperCase();
+    if (!this.data.claims[key]) return null;
+    this.data.claims[key] = { ...this.data.claims[key], ...patch };
+    await this.save();
+    return this.data.claims[key];
   }
 
   getAnnouncements(guildId) {
