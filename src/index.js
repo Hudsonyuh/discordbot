@@ -72,7 +72,7 @@ async function registerGuildCommands(guildId) {
 }
 
 async function denyUnlessStaff(interaction, permission) {
-  const required = permission || ({ clean: PermissionFlagsBits.ManageMessages, 'clear-all': PermissionFlagsBits.ManageChannels, deliver: PermissionFlagsBits.ManageRoles, 'product-role': PermissionFlagsBits.ManageRoles }[interaction.commandName] || PermissionFlagsBits.ManageGuild);
+  const required = permission || ({ clean: PermissionFlagsBits.ManageMessages, 'clear-all': PermissionFlagsBits.ManageChannels, deliver: PermissionFlagsBits.ManageRoles, 'product-role': PermissionFlagsBits.ManageRoles, product: PermissionFlagsBits.ManageRoles }[interaction.commandName] || PermissionFlagsBits.ManageGuild);
   return !await requirePermission(interaction, required, store);
 }
 
@@ -233,6 +233,52 @@ async function handleProductRoleCommand(interaction) {
   }
 }
 
+async function handleProductCommand(interaction) {
+  if (await denyUnlessStaff(interaction, PermissionFlagsBits.ManageRoles)) return;
+  const sub = interaction.options.getSubcommand();
+  const settings = store.getSettings(interaction.guildId);
+
+  if (sub === 'add') {
+    const name = interaction.options.getString('name', true).trim();
+    const role = interaction.options.getRole('role', true);
+    const tutorial = interaction.options.getChannel('tutorial-channel');
+    const websiteSlug = interaction.options.getString('website-slug');
+    const { key, product } = await store.setProduct(interaction.guildId, name, {
+      roleId: role.id,
+      tutorialChannelId: tutorial?.id || null,
+      websiteSlug
+    });
+    const details = [
+      `role <@&${role.id}>`,
+      tutorial ? `tutorial <#${tutorial.id}>` : null,
+      product.websiteSlugs?.length ? `shop slug \`${product.websiteSlugs[0]}\`` : null
+    ].filter(Boolean).join(' • ');
+    return interaction.reply({ content: `✅ **${product.name}** added to /deliver (${details}).`, ephemeral: true });
+  }
+
+  if (sub === 'list') {
+    const products = settings.products || {};
+    const lines = Object.entries(products).map(([key, product]) => {
+      const roleId = settings.productRoles?.[key];
+      const tutorialId = settings.tutorialChannels?.[key];
+      return `• **${product.name || key}**${roleId ? ` → <@&${roleId}>` : ' → role not set'}${tutorialId ? ` • <#${tutorialId}>` : ''}`;
+    });
+    return interaction.reply({ content: lines.length ? lines.join('\n').slice(0, 1900) : 'No products configured.', ephemeral: true });
+  }
+}
+
+async function handleAutocomplete(interaction) {
+  if (!interaction.guildId || interaction.commandName !== 'deliver') return interaction.respond([]);
+  const focused = interaction.options.getFocused(true);
+  if (focused.name !== 'product') return interaction.respond([]);
+  const query = normalizeProduct(focused.value);
+  const products = Object.entries(store.getSettings(interaction.guildId).products || {})
+    .filter(([key, product]) => !query || key.includes(query) || normalizeProduct(product.name).includes(query))
+    .slice(0, 25)
+    .map(([key, product]) => ({ name: String(product.name || key).slice(0, 100), value: String(product.name || key).slice(0, 100) }));
+  return interaction.respond(products);
+}
+
 async function handleAutomodCommand(interaction) {
   if (await denyUnlessStaff(interaction)) return;
   const sub = interaction.options.getSubcommand();
@@ -365,6 +411,7 @@ async function handleCommand(interaction) {
   if (interaction.commandName === 'clear-all') return handleClearAllCommand(interaction);
   if (interaction.commandName === 'deliver') return handleDeliver(interaction);
   if (interaction.commandName === 'product-role') return handleProductRoleCommand(interaction);
+  if (interaction.commandName === 'product') return handleProductCommand(interaction);
   if (interaction.commandName === 'welcome') return handleWelcomeCommand(interaction);
   if (interaction.commandName === 'faq') return handleFaqCommand(interaction, store);
 
@@ -442,6 +489,7 @@ client.on('error', error => console.error('[discord]', error.message));
 client.on('interactionCreate', async (interaction) => {
   try {
     if (shuttingDown) return;
+    if (interaction.isAutocomplete()) return await handleAutocomplete(interaction);
     if (!interaction.inGuild()) return interaction.reply({ content: 'Use this bot inside a server.', ephemeral: true });
     if (interaction.isChatInputCommand()) return await handleCommand(interaction);
     if (interaction.isButton()) {

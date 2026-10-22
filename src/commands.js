@@ -39,13 +39,7 @@ function buildCommands() {
         .setName('product')
         .setDescription('Product being delivered')
         .setRequired(true)
-        .addChoices(
-          { name: 'Among Us', value: 'Among Us' },
-          { name: 'Roblox', value: 'Roblox' },
-          { name: 'Meccha', value: 'Meccha' },
-          { name: 'Minecraft', value: 'Minecraft' },
-          { name: 'Discord', value: 'Discord' }
-        ))
+        .setAutocomplete(true))
       .addStringOption((o) => o
         .setName('order-id')
         .setDescription('Website HUD- order reference (required when website delivery is enabled)')
@@ -66,6 +60,21 @@ function buildCommands() {
         .setDescription('Remove a product-to-role mapping.')
         .addStringOption((o) => o.setName('product').setDescription('Product name').setRequired(true).setMaxLength(100)))
       .addSubcommand((s) => s.setName('list').setDescription('Show all configured product roles.'))
+      .setDefaultMemberPermissions(PermissionFlagsBits.ManageRoles),
+
+    new SlashCommandBuilder()
+      .setName('product')
+      .setDescription('Manage products available to /deliver.')
+      .addSubcommand((s) => s
+        .setName('add')
+        .setDescription('Add or update a product without editing bot code.')
+        .addStringOption((o) => o.setName('name').setDescription('Product name, e.g. FiveM').setRequired(true).setMaxLength(100))
+        .addRoleOption((o) => o.setName('role').setDescription('Discord role granted when delivered').setRequired(true))
+        .addChannelOption((o) => o.setName('tutorial-channel').setDescription('Optional tutorial/help channel').addChannelTypes(ChannelType.GuildText, ChannelType.GuildAnnouncement))
+        .addStringOption((o) => o.setName('website-slug').setDescription('Optional exact shop product slug for website delivery').setMaxLength(100)))
+      .addSubcommand((s) => s
+        .setName('list')
+        .setDescription('List products available to /deliver.'))
       .setDefaultMemberPermissions(PermissionFlagsBits.ManageRoles),
 
     new SlashCommandBuilder()
@@ -188,7 +197,7 @@ function buildCommands() {
         .addBooleanOption(o => o.setName('enabled').setDescription('Add to or remove from allowlist').setRequired(true)))
       .addSubcommand(s => s.setName('keybind').setDescription('Staff: confirm a product menu key.')
         .addStringOption(o => o.setName('product').setDescription('Product').setRequired(true).addChoices(
-          { name: 'Among Us', value: 'among-us' }, { name: 'Roblox', value: 'roblox' }, { name: 'Minecraft', value: 'minecraft' }, { name: 'Meccha', value: 'meccha' }))
+          { name: 'Among Us', value: 'among-us' }, { name: 'Roblox', value: 'roblox' }, { name: 'Minecraft', value: 'minecraft' }, { name: 'Meccha', value: 'meccha' }, { name: 'FiveM', value: 'fivem' }))
         .addStringOption(o => o.setName('key').setDescription('Confirmed key, e.g. Delete').setRequired(true).setMaxLength(60)))
       .addSubcommand(s => s.setName('add').setDescription('Staff: add or replace a custom FAQ answer.')
         .addStringOption(o => o.setName('id').setDescription('Unique ID, e.g. among-us-install').setRequired(true).setMaxLength(32))

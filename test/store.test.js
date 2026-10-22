@@ -75,3 +75,14 @@ test('legacy production data is backed up exactly once before migration', async 
   await new DataStore(store.filePath).init();
   assert.equal(await fs.readFile(`${store.filePath}.pre-v2.bak`, 'utf8'), legacy);
 });
+
+test('default catalog includes FiveM and staff can add products dynamically', async t => {
+  const store = await fixture(t);
+  assert.equal(store.getSettings('a').products.fivem.name, 'FiveM');
+  await store.setProduct('a', 'New Product', { roleId: 'role', tutorialChannelId: 'tutorial', websiteSlug: 'new-product-private' });
+  const settings = store.getSettings('a');
+  assert.equal(settings.products['new product'].name, 'New Product');
+  assert.deepEqual(settings.products['new product'].websiteSlugs, ['new-product-private']);
+  assert.equal(settings.productRoles['new product'], 'role');
+  assert.equal(settings.tutorialChannels['new product'], 'tutorial');
+});

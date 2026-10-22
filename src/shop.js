@@ -3,7 +3,8 @@ const { toJSON, fromCrossJSON } = require('seroval');
 const SHOP_ORIGIN = 'https://thehudsonshop.com';
 const PRODUCT_SLUGS = {
   'among us': ['among-us-private'], roblox: ['roblox-private'],
-  minecraft: ['minecraft-private'], meccha: ['mecha-private'], discord: ['discord-members']
+  minecraft: ['minecraft-private'], meccha: ['mecha-private'], discord: ['discord-members'],
+  fivem: ['fivem-private', 'fivem', 'five-m-private', 'five-m']
 };
 const CONFIRMABLE = new Set(['awaiting_payment', 'payment_claimed', 'under_review', 'more_information_needed', 'delivery_error']);
 
@@ -20,13 +21,14 @@ function discoverFunctions(source) {
   return ids;
 }
 
-function validateOrder(order, publicId, product) {
+function validateOrder(order, publicId, product, websiteSlugs = []) {
   if (!order || String(order.public_order_id).toUpperCase() !== publicId || !/^[a-f0-9-]{36}$/i.test(order.id)) throw new Error('The shop did not return the exact requested HUD order.');
-  if (!PRODUCT_SLUGS[product]?.includes(order.product)) throw new Error('The selected Discord product does not match the website order. Check the order in Payments.');
+  const allowedSlugs = (websiteSlugs.length ? websiteSlugs : PRODUCT_SLUGS[product] || []).map(slug => String(slug).trim().toLowerCase());
+  if (!allowedSlugs.includes(String(order.product).toLowerCase())) throw new Error('The selected Discord product does not match the website order. Check the order in Payments.');
   const delivered = ['delivered', 'paid'].includes(order.status) && Boolean(order.delivered_at);
   if (!delivered && !CONFIRMABLE.has(order.status)) throw new Error(`This website order cannot be confirmed from its current status (${String(order.status).slice(0, 40)}). Review it in Payments.`);
   if (!Number.isSafeInteger(order.amount_cents) || order.amount_cents <= 0) throw new Error('This order has an invalid amount. Review it in Payments.');
-  return { id: order.id, publicId, product, status: order.status, delivered, deliveredAt: order.delivered_at || null };
+  return { id: order.id, publicId, product, websiteSlugs: allowedSlugs, status: order.status, delivered, deliveredAt: order.delivered_at || null };
 }
 
 class ShopClient {
@@ -161,25 +163,25 @@ class ShopClient {
     return true;
   }
 
-  async inspectOrder(publicId, product) {
+  async inspectOrder(publicId, product, websiteSlugs = []) {
     if (!/^HUD-[A-Z0-9]{6,32}$/.test(publicId)) throw new Error('Website delivery requires the HUD- order reference from the receipt.');
     const result = await this.call('adminListManualOrders', { status: 'all', search: publicId, sort: 'newest' });
     if (!Array.isArray(result?.orders)) throw new Error('Unexpected shop order list.');
     const matches = result.orders.filter(order => String(order.public_order_id).toUpperCase() === publicId);
     if (matches.length !== 1) throw new Error('No unique exact match for that HUD order. Check the reference in Payments.');
     const detail = await this.call('adminGetOrderDetail', { orderId: matches[0].id });
-    return validateOrder(detail?.order, publicId, product);
+    return validateOrder(detail?.order, publicId, product, websiteSlugs);
   }
 
   async confirmOrder(order) {
     // Re-read immediately before the write, including on retries after Discord failures.
     const detail = await this.call('adminGetOrderDetail', { orderId: order.id });
-    const fresh = validateOrder(detail?.order, order.publicId, order.product);
+    const fresh = validateOrder(detail?.order, order.publicId, order.product, order.websiteSlugs);
     if (fresh.delivered) return fresh;
     // Deliberately no automatic retry for this mutation: it can send email and assign keys.
     await this.call('adminConfirmPayment', { orderId: fresh.id });
     const result = await this.call('adminGetOrderDetail', { orderId: fresh.id });
-    const confirmed = validateOrder(result?.order, order.publicId, order.product);
+    const confirmed = validateOrder(result?.order, order.publicId, order.product, order.websiteSlugs);
     if (!confirmed.delivered) throw new Error('The shop has not reported completed delivery. Check Payments before retrying.');
     return confirmed;
   }

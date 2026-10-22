@@ -30,6 +30,8 @@ async function deliverProduct(interaction) {
   const productInput = interaction.options.getString('product', true);
   const product = normalizeProduct(productInput);
   const settings = store.getSettings(interaction.guildId);
+  const productEntry = settings.products?.[product] || null;
+  const productLabel = productEntry?.name || productInput;
   let claim = orderId ? store.getClaim(orderId, interaction.guildId) : null;
   if (claim && claim.userId !== user.id) return interaction.editReply('This order was claimed by a different member. Resolve the claim before delivering.');
   if (claim?.status === 'delivered') return interaction.editReply('This order is already marked delivered.');
@@ -37,7 +39,7 @@ async function deliverProduct(interaction) {
   if (!settings.customerRoleId) return interaction.editReply('❌ Set the Customer role first with **/setup customer-role**.');
 
   const productRoleId = settings.productRoles?.[product];
-  if (!productRoleId) return interaction.editReply(`❌ No Discord role is mapped to **${productInput}**. Use **/product-role set** first.`);
+  if (!productRoleId) return interaction.editReply(`❌ No Discord role is mapped to **${productLabel}**. Use **/product-role set** first.`);
 
   const member = await interaction.guild.members.fetch(user.id).catch(() => null);
   if (!member) return interaction.editReply('❌ I could not find that member in this server.');
@@ -52,7 +54,7 @@ async function deliverProduct(interaction) {
 
   let websiteOrder;
   if (shop.enabled) {
-    websiteOrder = await shop.inspectOrder(orderId, product);
+    websiteOrder = await shop.inspectOrder(orderId, product, productEntry?.websiteSlugs || []);
     if (claim?.websiteOrderId && claim.websiteOrderId !== websiteOrder.id) return interaction.editReply('The saved website order does not match this reference. Ask the server owner to review it.');
     if (['confirming', 'uncertain'].includes(claim?.websiteDeliveryState) && !websiteOrder.delivered) return interaction.editReply('A previous website confirmation has an uncertain outcome. Check Confirm & Deliver in Shop Payments first, then retry once the website shows delivered. The bot will not send another confirmation automatically.');
   }
@@ -88,8 +90,8 @@ async function deliverProduct(interaction) {
 
   try {
     const reason = orderId
-      ? `Delivered ${productInput} • order ${orderId} • by ${interaction.user.tag}`
-      : `Delivered ${productInput} by ${interaction.user.tag}`;
+      ? `Delivered ${productLabel} • order ${orderId} • by ${interaction.user.tag}`
+      : `Delivered ${productLabel} by ${interaction.user.tag}`;
     await member.roles.add([settings.customerRoleId, productRoleId], reason);
   } catch (err) {
     return interaction.editReply(`${shop.enabled ? 'Website delivery is complete. Retry /deliver after fixing Discord permissions; the website confirmation will not be repeated. ' : ''}I couldn't assign the roles. Make sure my bot role is above the Customer and product roles and has **Manage Roles**. Discord error: ${err.message}`);
@@ -107,12 +109,12 @@ async function deliverProduct(interaction) {
   }
 
   const deliveryReference = orderId ? ` for order **${orderId}**` : '';
-  await interaction.editReply(`✅ **${productInput}** delivered to <@${user.id}>${deliveryReference}. ${shop.enabled ? 'Website delivery verified. ' : ''}Customer + product roles were assigned.`);
+  await interaction.editReply(`✅ **${productLabel}** delivered to <@${user.id}>${deliveryReference}. ${shop.enabled ? 'Website delivery verified. ' : ''}Customer + product roles were assigned.`);
 
   if (interaction.channel?.isTextBased()) {
     const tutorialChannelId = settings.tutorialChannels?.[product] || null;
     const tutorialText = tutorialChannelId
-      ? `If you need further assistance, the **${productInput} tutorial** is available in <#${tutorialChannelId}>.`
+      ? `If you need further assistance, the **${productLabel} tutorial** is available in <#${tutorialChannelId}>.`
       : 'If you need further assistance, contact staff in this ticket.';
 
     const deliveryFields = [
@@ -145,7 +147,7 @@ async function deliverProduct(interaction) {
     const embed = new EmbedBuilder()
       .setColor(0x57F287)
       .setTitle('✅ Product Access Granted')
-      .setDescription(`<@${user.id}>, your **${productInput}** purchase has been delivered.`)
+      .setDescription(`<@${user.id}>, your **${productLabel}** purchase has been delivered.`)
       .addFields(deliveryFields)
       .setFooter({ text: 'The Hudson Shop • Thank you for your purchase!' })
       .setTimestamp();
@@ -167,7 +169,7 @@ async function deliverProduct(interaction) {
   }
 
   const logFields = [
-    { name: 'Product', value: productInput, inline: true },
+    { name: 'Product', value: productLabel, inline: true },
     { name: 'Customer Role', value: `<@&${settings.customerRoleId}>`, inline: true },
     { name: 'Product Role', value: `<@&${productRoleId}>`, inline: true }
   ];
@@ -175,7 +177,7 @@ async function deliverProduct(interaction) {
 
   return sendLog(client, store, interaction.guildId, {
     title: 'Product delivered',
-    description: `<@${interaction.user.id}> delivered **${productInput}** to <@${user.id}>.`,
+    description: `<@${interaction.user.id}> delivered **${productLabel}** to <@${user.id}>.`,
     color: 0x57F287,
     fields: logFields
   });

@@ -63,3 +63,10 @@ test('failed or malformed admin responses cannot be treated as success', async (
   client.fetch = async () => Response.json({ somethingElse: true });
   await assert.rejects(client.checkConnection(), /rejected/);
 });
+
+test('FiveM and custom website slugs can be validated', () => {
+  const fiveM = { ...baseOrder(), product: 'fivem-private' };
+  assert.equal(validateOrder(fiveM, 'HUD-ABC123', 'fivem').product, 'fivem');
+  const custom = { ...baseOrder(), product: 'custom-private' };
+  assert.equal(validateOrder(custom, 'HUD-ABC123', 'custom', ['custom-private']).product, 'custom');
+});

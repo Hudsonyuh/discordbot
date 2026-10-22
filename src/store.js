@@ -3,6 +3,15 @@ const path = require('node:path');
 const crypto = require('node:crypto');
 const { constants } = require('node:fs');
 
+const DEFAULT_PRODUCTS = {
+  'among us': { name: 'Among Us', websiteSlugs: ['among-us-private'] },
+  roblox: { name: 'Roblox', websiteSlugs: ['roblox-private'] },
+  meccha: { name: 'Meccha', websiteSlugs: ['mecha-private'] },
+  minecraft: { name: 'Minecraft', websiteSlugs: ['minecraft-private'] },
+  discord: { name: 'Discord', websiteSlugs: ['discord-members'] },
+  fivem: { name: 'FiveM', websiteSlugs: ['fivem-private', 'fivem', 'five-m-private', 'five-m'] }
+};
+
 const DEFAULT_SETTINGS = {
   ticketCategoryIds: [],
   ticketParentChannelIds: [],
@@ -10,6 +19,7 @@ const DEFAULT_SETTINGS = {
   logChannelId: null,
   staffRoleId: null,
   customerRoleId: null,
+  products: structuredClone(DEFAULT_PRODUCTS),
   productRoles: {},
   tutorialChannels: {
     'among us': '1521722099260194889', roblox: '1520614681444618291',
@@ -74,6 +84,7 @@ class DataStore {
     guild.ticketPanels ||= {};
     guild.settings.ticketCategoryIds ||= [];
     guild.settings.ticketParentChannelIds ||= [];
+    guild.settings.products = { ...structuredClone(DEFAULT_PRODUCTS), ...(guild.settings.products || {}) };
     guild.settings.productRoles ||= {};
     guild.settings.blockedPhrases ||= [...DEFAULT_SETTINGS.blockedPhrases];
     guild.settings.blockedDomains ||= [];
@@ -120,9 +131,28 @@ class DataStore {
     await this.save();
   }
 
+  async setProduct(guildId, product, { roleId = null, tutorialChannelId = null, websiteSlug = null } = {}) {
+    const settings = this.getSettings(guildId);
+    const name = String(product || '').trim();
+    const key = name.toLowerCase().replace(/\s+/g, ' ');
+    if (!key) throw new Error('Product name is required.');
+    const current = settings.products[key] || {};
+    const slug = websiteSlug ? String(websiteSlug).trim().toLowerCase() : null;
+    settings.products[key] = {
+      name,
+      websiteSlugs: slug ? [slug] : [...(current.websiteSlugs || [])]
+    };
+    if (roleId) settings.productRoles[key] = roleId;
+    if (tutorialChannelId) settings.tutorialChannels[key] = tutorialChannelId;
+    await this.save();
+    return { key, product: settings.products[key] };
+  }
+
   async setProductRole(guildId, product, roleId) {
     const settings = this.getSettings(guildId);
-    const key = String(product).trim().toLowerCase().replace(/\s+/g, ' ');
+    const name = String(product).trim();
+    const key = name.toLowerCase().replace(/\s+/g, ' ');
+    settings.products[key] ||= { name, websiteSlugs: [] };
     settings.productRoles[key] = roleId;
     await this.save();
     return key;
@@ -227,4 +257,4 @@ class DataStore {
   }
 }
 
-module.exports = { DataStore, DEFAULT_SETTINGS };
+module.exports = { DataStore, DEFAULT_SETTINGS, DEFAULT_PRODUCTS };
