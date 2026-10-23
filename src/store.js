@@ -4,12 +4,12 @@ const crypto = require('node:crypto');
 const { constants } = require('node:fs');
 
 const DEFAULT_PRODUCTS = {
-  'among us': { name: 'Among Us', websiteSlugs: ['among-us-private'] },
-  roblox: { name: 'Roblox', websiteSlugs: ['roblox-private'] },
-  meccha: { name: 'Meccha', websiteSlugs: ['mecha-private'] },
-  minecraft: { name: 'Minecraft', websiteSlugs: ['minecraft-private'] },
-  discord: { name: 'Discord', websiteSlugs: ['discord-members'] },
-  fivem: { name: 'FiveM', websiteSlugs: ['fivem-private', 'fivem', 'five-m-private', 'five-m'] }
+  'among us': { name: 'Among Us', websiteSlugs: ['among-us-private'], features: [] },
+  roblox: { name: 'Roblox', websiteSlugs: ['roblox-private'], features: [] },
+  meccha: { name: 'Meccha', websiteSlugs: ['mecha-private'], features: [] },
+  minecraft: { name: 'Minecraft', websiteSlugs: ['minecraft-private'], features: [] },
+  discord: { name: 'Discord', websiteSlugs: ['discord-members'], features: [] },
+  fivem: { name: 'FiveM', websiteSlugs: ['fivem-private', 'fivem', 'five-m-private', 'five-m'], features: [] }
 };
 
 const DEFAULT_SETTINGS = {
@@ -85,6 +85,9 @@ class DataStore {
     guild.settings.ticketCategoryIds ||= [];
     guild.settings.ticketParentChannelIds ||= [];
     guild.settings.products = { ...structuredClone(DEFAULT_PRODUCTS), ...(guild.settings.products || {}) };
+    for (const [key, product] of Object.entries(guild.settings.products)) {
+      guild.settings.products[key] = { ...structuredClone(DEFAULT_PRODUCTS[key] || {}), ...product, features: [...(product.features || [])] };
+    }
     guild.settings.productRoles ||= {};
     guild.settings.blockedPhrases ||= [...DEFAULT_SETTINGS.blockedPhrases];
     guild.settings.blockedDomains ||= [];
@@ -140,7 +143,8 @@ class DataStore {
     const slug = websiteSlug ? String(websiteSlug).trim().toLowerCase() : null;
     settings.products[key] = {
       name,
-      websiteSlugs: slug ? [slug] : [...(current.websiteSlugs || [])]
+      websiteSlugs: slug ? [slug] : [...(current.websiteSlugs || [])],
+      features: [...(current.features || [])]
     };
     if (roleId) settings.productRoles[key] = roleId;
     if (tutorialChannelId) settings.tutorialChannels[key] = tutorialChannelId;
@@ -152,10 +156,36 @@ class DataStore {
     const settings = this.getSettings(guildId);
     const name = String(product).trim();
     const key = name.toLowerCase().replace(/\s+/g, ' ');
-    settings.products[key] ||= { name, websiteSlugs: [] };
+    settings.products[key] ||= { name, websiteSlugs: [], features: [] };
     settings.productRoles[key] = roleId;
     await this.save();
     return key;
+  }
+
+  async addProductFeature(guildId, product, feature) {
+    const settings = this.getSettings(guildId);
+    const key = String(product || '').trim().toLowerCase().replace(/\s+/g, ' ');
+    const entry = settings.products[key];
+    if (!entry) throw new Error('That product does not exist. Add it with /product add first.');
+    const value = String(feature || '').trim();
+    if (!value) throw new Error('Feature text is required.');
+    entry.features ||= [];
+    if (!entry.features.some((item) => item.toLowerCase() === value.toLowerCase())) entry.features.push(value);
+    await this.save();
+    return entry.features;
+  }
+
+  async removeProductFeature(guildId, product, feature) {
+    const settings = this.getSettings(guildId);
+    const key = String(product || '').trim().toLowerCase().replace(/\s+/g, ' ');
+    const entry = settings.products[key];
+    if (!entry) return false;
+    const target = String(feature || '').trim().toLowerCase();
+    const before = entry.features || [];
+    entry.features = before.filter((item) => item.toLowerCase() !== target);
+    const removed = entry.features.length !== before.length;
+    if (removed) await this.save();
+    return removed;
   }
 
   async removeProductRole(guildId, product) {

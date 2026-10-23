@@ -72,7 +72,7 @@ async function registerGuildCommands(guildId) {
 }
 
 async function denyUnlessStaff(interaction, permission) {
-  const required = permission || ({ clean: PermissionFlagsBits.ManageMessages, 'clear-all': PermissionFlagsBits.ManageChannels, deliver: PermissionFlagsBits.ManageRoles, 'product-role': PermissionFlagsBits.ManageRoles, product: PermissionFlagsBits.ManageRoles }[interaction.commandName] || PermissionFlagsBits.ManageGuild);
+  const required = permission || ({ clean: PermissionFlagsBits.ManageMessages, 'clear-all': PermissionFlagsBits.ManageChannels, deliver: PermissionFlagsBits.ManageRoles, 'product-role': PermissionFlagsBits.ManageRoles, product: PermissionFlagsBits.ManageRoles, feature: PermissionFlagsBits.ManageRoles }[interaction.commandName] || PermissionFlagsBits.ManageGuild);
   return !await requirePermission(interaction, required, store);
 }
 
@@ -267,8 +267,40 @@ async function handleProductCommand(interaction) {
   }
 }
 
+async function handleFeatureCommand(interaction) {
+  if (await denyUnlessStaff(interaction, PermissionFlagsBits.ManageRoles)) return;
+  const sub = interaction.options.getSubcommand();
+  const productInput = interaction.options.getString('product', true);
+  const key = normalizeProduct(productInput);
+  const settings = store.getSettings(interaction.guildId);
+  const product = settings.products?.[key];
+  if (!product) return interaction.reply({ content: '❌ That product does not exist. Add it with **/product add** first.', ephemeral: true });
+
+  if (sub === 'add') {
+    const feature = interaction.options.getString('feature', true).trim();
+    const features = await store.addProductFeature(interaction.guildId, key, feature);
+    return interaction.reply({ content: `✅ Added **${feature}** to **${product.name || productInput}**. It now has **${features.length}** saved feature${features.length === 1 ? '' : 's'}.`, ephemeral: true });
+  }
+
+  if (sub === 'remove') {
+    const feature = interaction.options.getString('feature', true).trim();
+    const removed = await store.removeProductFeature(interaction.guildId, key, feature);
+    return interaction.reply({ content: removed ? `✅ Removed **${feature}** from **${product.name || productInput}**.` : '❌ That exact feature was not found on this product.', ephemeral: true });
+  }
+
+  if (sub === 'list') {
+    const features = product.features || [];
+    return interaction.reply({
+      content: features.length
+        ? `**${product.name || productInput} features:**\n${features.map((feature, index) => `${index + 1}. ${feature}`).join('\n').slice(0, 1800)}`
+        : `**${product.name || productInput}** has no saved features yet.`,
+      ephemeral: true
+    });
+  }
+}
+
 async function handleAutocomplete(interaction) {
-  if (!interaction.guildId || interaction.commandName !== 'deliver') return interaction.respond([]);
+  if (!interaction.guildId || !['deliver', 'feature'].includes(interaction.commandName)) return interaction.respond([]);
   const focused = interaction.options.getFocused(true);
   if (focused.name !== 'product') return interaction.respond([]);
   const query = normalizeProduct(focused.value);
@@ -412,6 +444,7 @@ async function handleCommand(interaction) {
   if (interaction.commandName === 'deliver') return handleDeliver(interaction);
   if (interaction.commandName === 'product-role') return handleProductRoleCommand(interaction);
   if (interaction.commandName === 'product') return handleProductCommand(interaction);
+  if (interaction.commandName === 'feature') return handleFeatureCommand(interaction);
   if (interaction.commandName === 'welcome') return handleWelcomeCommand(interaction);
   if (interaction.commandName === 'faq') return handleFaqCommand(interaction, store);
 

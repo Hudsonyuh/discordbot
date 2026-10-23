@@ -86,3 +86,16 @@ test('default catalog includes FiveM and staff can add products dynamically', as
   assert.equal(settings.productRoles['new product'], 'role');
   assert.equal(settings.tutorialChannels['new product'], 'tutorial');
 });
+
+test('product features can be added, deduplicated, removed, and persist', async t => {
+  const store = await fixture(t);
+  await store.addProductFeature('a', 'FiveM', 'Aimbot');
+  await store.addProductFeature('a', 'fivem', 'aimbot');
+  assert.deepEqual(store.getSettings('a').products.fivem.features, ['Aimbot']);
+  assert.equal(await store.removeProductFeature('a', 'FiveM', 'AIMBOT'), true);
+  assert.deepEqual(store.getSettings('a').products.fivem.features, []);
+  await store.addProductFeature('a', 'FiveM', 'No Clip');
+  const restarted = new DataStore(store.filePath);
+  await restarted.init();
+  assert.deepEqual(restarted.getSettings('a').products.fivem.features, ['No Clip']);
+});

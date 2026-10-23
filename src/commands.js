@@ -78,6 +78,25 @@ function buildCommands() {
       .setDefaultMemberPermissions(PermissionFlagsBits.ManageRoles),
 
     new SlashCommandBuilder()
+      .setName('feature')
+      .setDescription('Manage product feature lists.')
+      .addSubcommand((s) => s
+        .setName('add')
+        .setDescription('Add a feature to a product.')
+        .addStringOption((o) => o.setName('product').setDescription('Product').setRequired(true).setAutocomplete(true))
+        .addStringOption((o) => o.setName('feature').setDescription('Feature to add').setRequired(true).setMinLength(2).setMaxLength(250)))
+      .addSubcommand((s) => s
+        .setName('remove')
+        .setDescription('Remove a feature from a product.')
+        .addStringOption((o) => o.setName('product').setDescription('Product').setRequired(true).setAutocomplete(true))
+        .addStringOption((o) => o.setName('feature').setDescription('Exact feature text to remove').setRequired(true).setMinLength(2).setMaxLength(250)))
+      .addSubcommand((s) => s
+        .setName('list')
+        .setDescription('List the saved features for a product.')
+        .addStringOption((o) => o.setName('product').setDescription('Product').setRequired(true).setAutocomplete(true)))
+      .setDefaultMemberPermissions(PermissionFlagsBits.ManageRoles),
+
+    new SlashCommandBuilder()
       .setName('ticket-panel')
       .setDescription('Post the Hudson Shop Purchase / Support / Claim menu in this channel.')
       .setDefaultMemberPermissions(PermissionFlagsBits.ManageGuild),
