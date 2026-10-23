@@ -1,4 +1,4 @@
-const { EmbedBuilder, PermissionFlagsBits: P } = require('discord.js');
+const { EmbedBuilder, PermissionFlagsBits: P, MessageFlags } = require('discord.js');
 const { sendLog } = require('./logger');
 const locks = new Set();
 const HOUR = 3_600_000;
@@ -23,9 +23,15 @@ async function withScheduleLock(guildId, id, action) {
   try { return await action(); } finally { locks.delete(key); }
 }
 async function handleAnnouncementCommand(interaction, client, store) {
+  // Acknowledge immediately so Discord does not expire the interaction while
+  // permission/data checks are running. Announcement actions can safely reply
+  // through editReply after this point.
+  await interaction.deferReply({ flags: MessageFlags.Ephemeral });
   const sub = interaction.options.getSubcommand();
   const guildId = interaction.guildId;
-  await interaction.deferReply({ ephemeral: true });
+  if (!interaction.memberPermissions?.has(P.ManageGuild)) {
+    return interaction.editReply('You do not have the required server permission for this action.');
+  }
   try {
     if (sub === 'send' || sub === 'schedule') {
       const channel = interaction.options.getChannel('channel', true);

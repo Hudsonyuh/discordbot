@@ -1,6 +1,6 @@
 const { test } = require('node:test');
 const assert = require('node:assert/strict');
-const { createAnnouncementScheduler, announcementPayload } = require('../src/announcements');
+const { createAnnouncementScheduler, announcementPayload, handleAnnouncementCommand } = require('../src/announcements');
 function fixture() {
   let time = 50_000_000;
   let sends = 0;
@@ -49,4 +49,27 @@ test('invalid intervals pause instead of spamming', async () => {
 test('announcement mentions are opt-in and never include user/role pings', () => {
   assert.deepEqual(announcementPayload('@everyone <@123>', false).allowedMentions, { parse: [] });
   assert.deepEqual(announcementPayload('Hello', true).allowedMentions, { parse: ['everyone'] });
+});
+
+test('/announce remove acknowledges immediately and removes the requested ID', async () => {
+  const events = [];
+  const entry = { id: 'CA89A4', channelId: 'channel', intervalHours: 1, message: 'old' };
+  const store = {
+    getAnnouncements: () => [entry],
+    async removeAnnouncement(_guildId, id) { events.push(`remove:${id}`); return true; }
+  };
+  const interaction = {
+    guildId: 'guild',
+    memberPermissions: { has: permission => permission === require('discord.js').PermissionFlagsBits.ManageGuild },
+    options: {
+      getSubcommand: () => 'remove',
+      getString: name => name === 'id' ? 'ca89a4' : null
+    },
+    async deferReply() { events.push('defer'); },
+    async editReply(message) { events.push(`reply:${typeof message === 'string' ? message : message.content}`); }
+  };
+  await handleAnnouncementCommand(interaction, {}, store);
+  assert.equal(events[0], 'defer');
+  assert.ok(events.includes('remove:CA89A4'));
+  assert.ok(events.some(event => event.includes('Removed schedule **CA89A4**')));
 });

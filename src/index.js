@@ -465,7 +465,6 @@ async function handleCommand(interaction) {
   }
 
   if (interaction.commandName === 'announce') {
-    if (await denyUnlessStaff(interaction)) return;
     return handleAnnouncementCommand(interaction, client, store);
   }
   if (interaction.commandName === 'setup') return handleSetup(interaction);
