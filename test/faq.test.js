@@ -1,37 +1,79 @@
 const { test } = require('node:test');
 const assert = require('node:assert/strict');
 const { matchFaq, handleFaqMessage } = require('../src/faq');
-const settings = () => ({ enabled: true, channelIds: [], cooldownSeconds: 60, keybinds: { 'among-us': 'Delete', roblox: 'Insert' }, custom: {} });
-test('keybinds use confirmed product context; ambiguous questions clarify', () => {
-  const config = settings();
-  assert.match(matchFaq('What key opens the Among Us menu?', config).answer, /Delete/);
-  assert.match(matchFaq('What key opens the menu?', config, 'among-us-help').answer, /Delete/);
-  assert.match(matchFaq('what key opens the roblox menu?', config, 'among-us-help').answer, /Insert/);
-  assert.equal(matchFaq('What key opens the menu?', config).id, 'keybind-clarify');
-  assert.equal(matchFaq('What key opens the Among Us or Roblox menu?', config).id, 'keybind-clarify');
-  assert.match(matchFaq('How do I open the Minecraft menu?', config).answer, /not confirmed/);
+
+const settings = () => ({
+  enabled: true,
+  channelIds: [],
+  cooldownSeconds: 60,
+  keybinds: {},
+  custom: {}
 });
-test('ordinary conversation, pasted links, and ambiguous topics do not trigger', () => {
-  for (const text of ['I downloaded it yesterday', 'My lifetime plan is great', '> how do I download?', 'https://example.com where is my key?', 'Where do I download and get a refund?']) assert.equal(matchFaq(text, settings()), null, text);
-});
-test('verified FAQ matches and custom phrases respect word boundaries', () => {
-  assert.equal(matchFaq('Where do I find my downloads?', settings()).id, 'downloads');
-  assert.equal(matchFaq('Where is my license key?', settings()).id, 'delivery');
-  assert.equal(matchFaq('Is Among Us working?', settings()).id, 'status');
+
+test('confirmed menu keys cover the current products', () => {
   const config = settings();
-  config.custom.install = { id: 'install', title: 'Install', answer: 'Staff instructions', triggers: ['install among us'] };
-  assert.equal(matchFaq('How do I install Among Us?', config).id, 'install');
-  assert.notEqual(matchFaq('How do I reinstall Among Us?', config)?.id, 'install');
+  assert.match(matchFaq('What key opens Among Us free?', config).answer, /Delete/);
+  assert.match(matchFaq('What key opens Among Us private?', config).answer, /Insert/);
+  const genericAmongUs = matchFaq('What key opens the Among Us menu?', config).answer;
+  assert.match(genericAmongUs, /Free.*Delete/s);
+  assert.match(genericAmongUs, /Private.*Insert/s);
+  assert.match(matchFaq('What key opens Fortnite?', config).answer, /Insert/);
+  assert.match(matchFaq('What key opens FiveM?', config).answer, /Insert/);
+  assert.match(matchFaq('What key opens Meccha Chameleon?', config).answer, /Insert/);
+  assert.match(matchFaq('What key opens Minecraft?', config).answer, /Insert/);
+  assert.match(matchFaq('What key opens Roblox?', config).answer, /Insert/);
+  assert.match(matchFaq('What key opens Black Ops 3?', config).answer, /Delete/);
 });
-test('toggle, channel scopes, bots, and cooldowns gate automatic replies', async () => {
+
+test('ambiguous key question asks for product', () => {
+  const entry = matchFaq('What key opens the menu?', settings());
+  assert.equal(entry.id, 'keybind-clarify');
+  assert.match(entry.answer, /reply with just the product name/i);
+});
+
+test('always imposter routes users to paid Among Us', () => {
+  const entry = matchFaq('How do I always imposter without host?', settings());
+  assert.equal(entry.id, 'always-imposter');
+  assert.match(entry.answer, /paid\/private Among Us/i);
+});
+
+test('website FAQ topics match natural questions', () => {
   const config = settings();
-  let replies = 0;
-  const store = { getSettings: () => ({ faq: config }) };
-  const message = { guild: { id: 'faq-test' }, author: { id: 'user' }, channelId: 'general', channel: { name: 'general' }, content: 'Where do I find my downloads?', reply: async payload => { replies++; assert.equal(payload.allowedMentions.repliedUser, false); } };
-  config.enabled = false; assert.equal(await handleFaqMessage(message, store), false);
-  config.enabled = true; config.channelIds = ['help']; assert.equal(await handleFaqMessage(message, store), false);
-  message.channel.parentId = 'help'; assert.equal(await handleFaqMessage(message, store), true);
-  assert.equal(await handleFaqMessage(message, store), false);
-  message.author = { id: 'bot', bot: true }; assert.equal(await handleFaqMessage(message, store), false);
-  assert.equal(replies, 1);
+  assert.equal(matchFaq('Where do I find my downloads?', config).id, 'downloads');
+  assert.equal(matchFaq('Where is my license key?', config).id, 'delivery');
+  assert.equal(matchFaq('How do I look up my order?', config).id, 'orders');
+  assert.equal(matchFaq('What should I do if it is not working?', config).id, 'troubleshooting');
+  assert.equal(matchFaq('How do I contact support?', config).id, 'support');
+  assert.equal(matchFaq('Do you offer refunds?', config).id, 'refunds');
+  assert.equal(matchFaq('What payment methods do you accept?', config).id, 'payments');
+  assert.equal(matchFaq('How do product updates and compatibility work?', config).id, 'updates');
+});
+
+test('ordinary conversation and pasted links do not trigger', () => {
+  for (const text of [
+    'I downloaded it yesterday',
+    'My lifetime plan is great',
+    '> how do I download?',
+    'https://example.com where is my key?'
+  ]) assert.equal(matchFaq(text, settings()), null, text);
+});
+
+test('follow-up product-only answer completes key clarification', async () => {
+  const config = settings();
+  const guildSettings = { faq: config, ticketParentChannelIds: ['purchase'] };
+  const store = { getSettings: () => guildSettings };
+  const replies = [];
+  const message = {
+    guild: { id: 'faq-followup' },
+    author: { id: 'user' },
+    channelId: 'help',
+    channel: { name: 'help' },
+    content: 'What key opens the menu?',
+    reply: async payload => replies.push(payload.embeds[0].data.description)
+  };
+  assert.equal(await handleFaqMessage(message, store), true);
+  message.content = 'Among Us';
+  assert.equal(await handleFaqMessage(message, store), true);
+  assert.match(replies[1], /Delete/);
+  assert.match(replies[1], /Insert/);
 });

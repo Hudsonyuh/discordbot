@@ -216,7 +216,14 @@ function buildCommands() {
         .addBooleanOption(o => o.setName('enabled').setDescription('Add to or remove from allowlist').setRequired(true)))
       .addSubcommand(s => s.setName('keybind').setDescription('Staff: confirm a product menu key.')
         .addStringOption(o => o.setName('product').setDescription('Product').setRequired(true).addChoices(
-          { name: 'Among Us', value: 'among-us' }, { name: 'Roblox', value: 'roblox' }, { name: 'Minecraft', value: 'minecraft' }, { name: 'Meccha', value: 'meccha' }, { name: 'FiveM', value: 'fivem' }))
+          { name: 'Among Us', value: 'among-us' },
+          { name: 'Fortnite', value: 'fortnite' },
+          { name: 'FiveM', value: 'fivem' },
+          { name: 'Meccha Chameleon', value: 'meccha' },
+          { name: 'Minecraft', value: 'minecraft' },
+          { name: 'Roblox', value: 'roblox' },
+          { name: 'Valorant', value: 'valorant' },
+          { name: 'Black Ops 3', value: 'black-ops-3' }))
         .addStringOption(o => o.setName('key').setDescription('Confirmed key, e.g. Delete').setRequired(true).setMaxLength(60)))
       .addSubcommand(s => s.setName('add').setDescription('Staff: add or replace a custom FAQ answer.')
         .addStringOption(o => o.setName('id').setDescription('Unique ID, e.g. among-us-install').setRequired(true).setMaxLength(32))
