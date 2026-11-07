@@ -70,3 +70,18 @@ test('FiveM and custom website slugs can be validated', () => {
   const custom = { ...baseOrder(), product: 'custom-private' };
   assert.equal(validateOrder(custom, 'HUD-ABC123', 'custom', ['custom-private']).product, 'custom');
 });
+
+test('Fortnite website orders validate against fortnite-private', () => {
+  const { validateOrder } = require('../src/shop');
+  const order = {
+    id: '11111111-1111-4111-8111-111111111111',
+    public_order_id: 'HUD-ABC123',
+    product: 'fortnite-private',
+    status: 'paid',
+    delivered_at: '2026-11-07T00:00:00Z',
+    amount_cents: 499
+  };
+  const result = validateOrder(order, 'HUD-ABC123', 'fortnite');
+  assert.equal(result.product, 'fortnite');
+  assert.equal(result.delivered, true);
+});

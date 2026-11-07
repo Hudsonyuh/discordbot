@@ -4,7 +4,8 @@ const SHOP_ORIGIN = 'https://thehudsonshop.com';
 const PRODUCT_SLUGS = {
   'among us': ['among-us-private'], roblox: ['roblox-private'],
   minecraft: ['minecraft-private'], meccha: ['mecha-private'], discord: ['discord-members'],
-  fivem: ['fivem-private', 'fivem', 'five-m-private', 'five-m']
+  fivem: ['fivem-private', 'fivem', 'five-m-private', 'five-m'],
+  fortnite: ['fortnite-private']
 };
 const CONFIRMABLE = new Set(['awaiting_payment', 'payment_claimed', 'under_review', 'more_information_needed', 'delivery_error']);
 

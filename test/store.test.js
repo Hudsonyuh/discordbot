@@ -99,3 +99,11 @@ test('product features can be added, deduplicated, removed, and persist', async 
   await restarted.init();
   assert.deepEqual(restarted.getSettings('a').products.fivem.features, ['No Clip']);
 });
+
+test('Fortnite has the Hudson Shop website slug and backfills an older empty mapping', async t => {
+  const store = await fixture(t);
+  const settings = store.getSettings('fortnite-guild');
+  assert.deepEqual(settings.products.fortnite.websiteSlugs, ['fortnite-private']);
+  settings.products.fortnite = { name: 'Fortnite', websiteSlugs: [], features: [] };
+  assert.deepEqual(store.getSettings('fortnite-guild').products.fortnite.websiteSlugs, ['fortnite-private']);
+});

@@ -9,7 +9,8 @@ const DEFAULT_PRODUCTS = {
   meccha: { name: 'Meccha', websiteSlugs: ['mecha-private'], features: [] },
   minecraft: { name: 'Minecraft', websiteSlugs: ['minecraft-private'], features: [] },
   discord: { name: 'Discord', websiteSlugs: ['discord-members'], features: [] },
-  fivem: { name: 'FiveM', websiteSlugs: ['fivem-private', 'fivem', 'five-m-private', 'five-m'], features: [] }
+  fivem: { name: 'FiveM', websiteSlugs: ['fivem-private', 'fivem', 'five-m-private', 'five-m'], features: [] },
+  fortnite: { name: 'Fortnite', websiteSlugs: ['fortnite-private'], features: [] }
 };
 
 const DEFAULT_SETTINGS = {
@@ -86,7 +87,13 @@ class DataStore {
     guild.settings.ticketParentChannelIds ||= [];
     guild.settings.products = { ...structuredClone(DEFAULT_PRODUCTS), ...(guild.settings.products || {}) };
     for (const [key, product] of Object.entries(guild.settings.products)) {
-      guild.settings.products[key] = { ...structuredClone(DEFAULT_PRODUCTS[key] || {}), ...product, features: [...(product.features || [])] };
+      const defaults = structuredClone(DEFAULT_PRODUCTS[key] || {});
+      const merged = { ...defaults, ...product, features: [...(product.features || [])] };
+      // Backfill known Hudson Shop slugs for products that were added before their website mapping existed.
+      if ((!merged.websiteSlugs || merged.websiteSlugs.length === 0) && defaults.websiteSlugs?.length) {
+        merged.websiteSlugs = [...defaults.websiteSlugs];
+      }
+      guild.settings.products[key] = merged;
     }
     guild.settings.productRoles ||= {};
     guild.settings.blockedPhrases ||= [...DEFAULT_SETTINGS.blockedPhrases];
