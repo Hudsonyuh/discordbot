@@ -202,6 +202,18 @@ async function handleWelcomeCommand(interaction) {
       ephemeral: true
     });
   }
+  if (sub === 'log-test') {
+    await interaction.deferReply({ ephemeral: true });
+    const logChannelId = store.getSettings(interaction.guildId).logChannelId;
+    const sent = await sendLog(client, store, interaction.guildId, {
+      title: 'Welcome DM logs test',
+      description: `Triggered by <@${interaction.user.id}>. This confirms welcome DM logs can reach this channel.`,
+      color: 0x7628BE
+    });
+    return interaction.editReply(sent
+      ? `Test log delivered to <#${logChannelId}>.`
+      : `Could not send a test log to <#${logChannelId || '0'}>. Check that Hudson's Bot can View Channel, Send Messages, and Embed Links.`);
+  }
   if (sub === 'send') return previewJoinDms(interaction, store);
   if (sub === 'send-confirm') return confirmJoinDms(interaction, store, client, sendLog);
   if (sub === 'off') {
