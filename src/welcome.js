@@ -109,6 +109,22 @@ function selectJoinedMembers(members, cutoff, now, store, guildId) {
     .sort((a,b) => a.joinedAt - b.joinedAt);
 }
 
+async function fetchJoinCandidates(guild, fetchMembers = () => guild.members.fetch(), delay = ms => new Promise(resolve => setTimeout(resolve, ms))) {
+  // Discord gateway member requests may be throttled (opcode 8). Wait for
+  // Discord's suggested retry window instead of misleadingly reporting missing intents.
+  for (let attempt = 0; attempt < 3; attempt++) {
+    try {
+      return await fetchMembers();
+    } catch (error) {
+      const message = String(error?.message || '');
+      const match = message.match(/retry after\s+(\d+(?:\.\d+)?)\s+seconds?/i);
+      if (!/rate limited|retry after/i.test(message) || attempt === 2) throw error;
+      const retryMs = match ? Number(match[1]) * 1000 : 15_000;
+      await delay(Math.min(60_000, Math.max(1_000, retryMs + 1500)));
+    }
+  }
+}
+
 async function previewJoinDms(interaction, store) {
   await interaction.deferReply({ ephemeral: true });
   let cutoff;
@@ -123,10 +139,13 @@ async function previewJoinDms(interaction, store) {
 
   let members;
   try {
-    members = await interaction.guild.members.fetch();
+    members = await fetchJoinCandidates(interaction.guild);
   } catch (error) {
     console.error('[welcome-bulk] Cannot fetch members:', error.message);
-    return interaction.editReply('Cannot retrieve server members. Check the Server Members Intent in Discord Developer Portal and Railway ENABLE_MEMBER_INTENT=true.');
+    const message = /4014|disallowed intent|missing access|missing permissions|privileged intent/i.test(error.message)
+      ? 'Cannot retrieve members. Enable Server Members Intent in the Discord Developer Portal (Bot settings). Railway ENABLE_MEMBER_INTENT must also be true.'
+      : 'Discord could not retrieve members right now. Try again shortly; if this continues, check Railway logs for the specific Discord error.';
+    return interaction.editReply(message);
   }
   const now = new Date();
   const matches = selectJoinedMembers(members, cutoff, now, store, interaction.guildId);
