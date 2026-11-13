@@ -95,7 +95,7 @@ function getJoinWindow({ hours, sinceDate }, now = new Date()) {
     if (!Number.isInteger(hours) || hours < 1 || hours > 720) throw new Error('Hours must be between 1 and 720.');
     return new Date(now.getTime() - hours * 60 * 60 * 1000);
   }
-  if (!/^\\d{4}-\\d{2}-\\d{2}$/.test(sinceDate || '')) throw new Error('Use YYYY-MM-DD for since-date (UTC).');
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(sinceDate || '')) throw new Error('Use YYYY-MM-DD for since-date (UTC).');
   const cutoff = new Date(`${sinceDate}T00:00:00.000Z`);
   if (!Number.isFinite(cutoff.getTime()) || cutoff.toISOString().slice(0, 10) !== sinceDate || cutoff > now) throw new Error('Choose a real date that is not in the future.');
   if (now.getTime() - cutoff.getTime() > 30 * 24 * 3600 * 1000) throw new Error('Date must be within the last 30 days.');
