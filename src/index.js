@@ -594,6 +594,65 @@ function startWebServer() {
   return server;
 }
 
+// One-time Hudson Academy onboarding, configured from the owner's selected channel ID.
+const ACADEMY_GUILD_ID = '1258581305453711503';
+const ACADEMY_CHANNEL_ID = '1570883687615303812';
+
+async function bootstrapHudsonAcademy() {
+  const guild = client.guilds.cache.get(ACADEMY_GUILD_ID);
+  if (!guild) throw new Error('Hudson guild is not available to the bot');
+  const channel = await guild.channels.fetch(ACADEMY_CHANNEL_ID);
+  if (!channel || channel.guildId !== guild.id || !channel.isTextBased() ||
+      !channel.permissionOverwrites?.edit) throw new Error('Academy channel is missing or is not a configurable text channel');
+
+  const botMember = await guild.members.fetchMe();
+  const required = PermissionFlagsBits.ManageRoles | PermissionFlagsBits.ManageChannels;
+  if (!botMember.permissions.has(required)) throw new Error('Bot needs Manage Roles and Manage Channels');
+  if (!channel.permissionsFor(botMember)?.has(PermissionFlagsBits.SendMessages | PermissionFlagsBits.EmbedLinks))
+    throw new Error('Bot needs Send Messages and Embed Links in the Academy channel');
+
+  const settings = store.getSettings(guild.id);
+  let role = settings.productRoles.academy
+    ? await guild.roles.fetch(settings.productRoles.academy).catch(() => null)
+    : null;
+  if (!role) role = guild.roles.cache.find(r => r.name === 'Academy' && !r.managed) || null;
+  if (!role) {
+    role = await guild.roles.create({
+      name: 'Academy', color: 0x7628BE, mentionable: false, hoist: false,
+      reason: 'Hudson Academy channel setup'
+    });
+  }
+  if (role.managed || role.permissions.has(
+    PermissionFlagsBits.Administrator | PermissionFlagsBits.ManageGuild | PermissionFlagsBits.ManageRoles
+  )) throw new Error('Academy role must be an ordinary non-admin role');
+  if (!role.editable) throw new Error('Academy role must be below the bot role for /deliver');
+
+  await channel.permissionOverwrites.edit(guild.roles.everyone, { ViewChannel: false }, { reason: 'Academy purchaser access' });
+  await channel.permissionOverwrites.edit(role, { ViewChannel: true, ReadMessageHistory: true }, { reason: 'Academy purchaser access' });
+  await store.setProduct(guild.id, 'Academy', { roleId: role.id, tutorialChannelId: channel.id });
+
+  const updatedSettings = store.getSettings(guild.id);
+  if (updatedSettings.academyGuideChannelId !== channel.id || !updatedSettings.academyGuideMessageId) {
+    const embed = new EmbedBuilder()
+      .setColor(0x7628BE)
+      .setTitle('Hudson Academy | Getting Started')
+      .setDescription('Welcome to **Hudson Academy**! Follow these steps to access your purchase.')
+      .addFields(
+        { name: '1. Open The Hudson Shop', value: 'Go to **https://thehudsonshop.com**.' },
+        { name: '2. Sign in', value: 'Use the **same email/account you purchased with**.' },
+        { name: '3. Enter the Academy', value: 'Open **https://thehudsonshop.com/academy** while signed in.' },
+        { name: '4. Check your order', value: 'If access is still locked, check **My Orders** and verify the payment/delivery status.' },
+        { name: '5. Discord role access', value: `After staff verifies and delivers your order, you receive <@&${role.id}> and access to this channel.` },
+        { name: 'Need assistance?', value: 'Open a support ticket with your **HUD- order ID**. Never share account passwords or payment details.' }
+      )
+      .setFooter({ text: 'Hudson Shop • Academy access' });
+    const message = await channel.send({ embeds: [embed], allowedMentions: { parse: [] } });
+    await store.updateSettings(guild.id, { academyGuideChannelId: channel.id, academyGuideMessageId: message.id });
+    console.log(`[academy] Guide posted: ${message.id}`);
+  }
+  console.log(`[academy] Configured role ${role.id} and channel ${channel.id}`);
+}
+
 client.once(Events.ClientReady, async () => {
   console.log(`Logged in as ${client.user.tag}.`);
   client.user.setActivity('TheHudsonShop.com', { type: ActivityType.Watching });
@@ -603,6 +662,7 @@ client.once(Events.ClientReady, async () => {
       if (!process.env.DISCORD_GUILD_ID || process.env.DISCORD_GUILD_ID === guildId) await registerGuildCommands(guildId);
     }
   }
+  await bootstrapHudsonAcademy().catch(err => console.error('[academy] Automatic setup failed:', err.message));
 });
 
 client.on('guildCreate', (guild) => {
