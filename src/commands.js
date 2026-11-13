@@ -115,6 +115,7 @@ function buildCommands() {
         .setDescription('Change only the welcome message text.')
         .addStringOption((o) => o.setName('message').setDescription('Supports {user}, {username}, {displayName}, {server}, {memberCount}').setMaxLength(1500).setRequired(true)))
       .addSubcommand((s) => s.setName('test').setDescription('Send a test welcome using your own account.'))
+      .addSubcommand((s) => s.setName('dm-test').setDescription('DM yourself the exact automatic join message.'))
       .addSubcommand((s) => s.setName('off').setDescription('Turn automatic welcomes off.'))
       .addSubcommand((s) => s.setName('status').setDescription('Show the current welcome configuration.'))
       .setDefaultMemberPermissions(PermissionFlagsBits.ManageGuild),

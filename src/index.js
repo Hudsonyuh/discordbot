@@ -192,6 +192,16 @@ async function handleWelcomeCommand(interaction) {
     await sendWelcome(member, store, { force: true, channelOverride: channelId });
     return interaction.reply({ content: `✅ Test welcome sent in <#${channelId}>.`, ephemeral: true });
   }
+  if (sub === 'dm-test') {
+    const member = await interaction.guild.members.fetch(interaction.user.id);
+    const sent = await sendJoinDm(member);
+    return interaction.reply({
+      content: sent
+        ? '✅ I sent you the exact automatic join DM.'
+        : '❌ I could not DM you. Make sure you allow direct messages from members of this server, then try again.',
+      ephemeral: true
+    });
+  }
   if (sub === 'off') {
     await store.updateSettings(interaction.guildId, { welcome: { ...settings.welcome, enabled: false } });
     return interaction.reply({ content: '✅ Automatic welcome messages are off.', ephemeral: true });
@@ -508,7 +518,18 @@ client.on('channelDelete', channel => {
   if (channel.guild && store.getTicketPanel(channel.guild.id, channel.id)) store.setTicketPanel(channel.guild.id, channel.id, null).catch(error => console.error('[ticket-delete]', error.message));
 });
 client.on('guildMemberAdd', async (member) => {
-  await sendJoinDm(member);
+  const dmSent = await sendJoinDm(member);
+  await sendLog(client, store, member.guild.id, {
+    title: dmSent ? 'New member DM sent' : 'New member DM failed',
+    description: dmSent
+      ? `Successfully sent the automatic welcome DM to <@${member.id}>.`
+      : `Could not send the automatic welcome DM to <@${member.id}>. Their Discord privacy settings may block DMs.`,
+    fields: [
+      { name: 'Member', value: `${member.user.tag} (${member.id})` },
+      { name: 'DM status', value: dmSent ? 'Sent' : 'Failed', inline: true }
+    ],
+    color: dmSent ? 0x57F287 : 0xED4245
+  });
   await sendWelcome(member, store).catch((err) => console.error('[welcome]', err.message));
 });
 client.on('messageCreate', async (message) => {
