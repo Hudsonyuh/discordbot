@@ -10,7 +10,8 @@ const DEFAULT_PRODUCTS = {
   minecraft: { name: 'Minecraft', websiteSlugs: ['minecraft-private'], features: [] },
   discord: { name: 'Discord', websiteSlugs: ['discord-members'], features: [] },
   fivem: { name: 'FiveM', websiteSlugs: ['fivem-private', 'fivem', 'five-m-private', 'five-m'], features: [] },
-  fortnite: { name: 'Fortnite', websiteSlugs: ['fortnite-private'], features: [] }
+  fortnite: { name: 'Fortnite', websiteSlugs: ['fortnite-private'], features: [] },
+  academy: { name: 'Academy', websiteSlugs: ['academy', 'hudson-academy'], features: [] }
 };
 
 const HUDSON_GUILD_ID = '1258581305453711503';

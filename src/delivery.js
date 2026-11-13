@@ -108,6 +108,7 @@ async function deliverProduct(interaction) {
     }, interaction.guildId);
   }
 
+  const isAcademy = product === 'academy';
   const deliveryReference = orderId ? ` for order **${orderId}**` : '';
   await interaction.editReply(`✅ **${productLabel}** delivered to <@${user.id}>${deliveryReference}. ${shop.enabled ? 'Website delivery verified. ' : ''}Customer + product roles were assigned.`);
 
@@ -117,7 +118,12 @@ async function deliverProduct(interaction) {
       ? `If you need further assistance, the **${productLabel} tutorial** is available in <#${tutorialChannelId}>.`
       : 'If you need further assistance, contact staff in this ticket.';
 
-    const deliveryFields = [
+    const deliveryFields = isAcademy ? [
+      { name: '1. Log in with your purchase email', value: 'Go to https://thehudsonshop.com and sign in with the account/email used at checkout.' },
+      { name: '2. Access the Academy', value: '[Open Hudson Academy](https://thehudsonshop.com/academy) while signed in. If access looks locked, review My Orders and open a ticket with your HUD- order ID.' },
+      { name: '3. Discord Academy channel', value: tutorialText },
+      { name: 'Need help?', value: 'Open a support ticket. Do not share your password or payment credentials.' }
+    ] : [
       {
         name: '1. Check Your Email',
         value: 'Your key was delivered to the email used to purchase. Check that inbox for your key.'
@@ -155,8 +161,8 @@ async function deliverProduct(interaction) {
     const downloadRow = new ActionRowBuilder().addComponents(
       new ButtonBuilder()
         .setStyle(ButtonStyle.Link)
-        .setURL(DOWNLOADS_URL)
-        .setLabel('Download Loader')
+        .setURL(isAcademy ? 'https://thehudsonshop.com/academy' : DOWNLOADS_URL)
+        .setLabel(isAcademy ? 'Open Hudson Academy' : 'Download Loader')
         .setEmoji('⬇️')
     );
 

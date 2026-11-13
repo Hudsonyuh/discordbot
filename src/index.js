@@ -291,6 +291,87 @@ async function handleProductCommand(interaction) {
   }
 }
 
+async function handleAcademyCommand(interaction) {
+  if (await denyUnlessStaff(interaction, PermissionFlagsBits.ManageGuild)) return;
+  const sub = interaction.options.getSubcommand();
+  const settings = store.getSettings(interaction.guildId);
+  if (sub === 'status') {
+    const roleId = settings.productRoles?.academy;
+    const channelId = settings.tutorialChannels?.academy;
+    const slugs = settings.products?.academy?.websiteSlugs || [];
+    return interaction.reply({ content: [
+      '**Hudson Academy Configuration**',
+      `Role: ${roleId ? `<@&${roleId}>` : 'Not configured'}`,
+      `Channel: ${channelId ? `<#${channelId}>` : 'Not configured'}`,
+      `Website product ID(s): ${slugs.length ? slugs.map(x => `\`${x}\``).join(', ') : 'Not configured'}`,
+      'The /deliver command validates an exact website order and confirms delivery before assigning roles.'
+    ].join('\\n'), ephemeral: true });
+  }
+  if (sub === 'setup') {
+    await interaction.deferReply({ ephemeral: true });
+    const channel = interaction.options.getChannel('channel', true);
+    const slug = interaction.options.getString('website-slug');
+    if (!channel?.permissionOverwrites?.edit || channel.guildId !== interaction.guildId)
+      return interaction.editReply('Select a text channel in this server.');
+    if (!interaction.guild.members.me?.permissions.has(PermissionFlagsBits.ManageRoles) ||
+        !interaction.guild.members.me?.permissions.has(PermissionFlagsBits.ManageChannels))
+      return interaction.editReply('I need **Manage Roles** and **Manage Channels** permissions to set up Academy.');
+    let role = settings.productRoles?.academy
+      ? await interaction.guild.roles.fetch(settings.productRoles.academy).catch(() => null)
+      : null;
+    if (!role) role = interaction.guild.roles.cache.find(r => r.name === 'Academy' && !r.managed);
+    if (!role) {
+      role = await interaction.guild.roles.create({
+        name: 'Academy', color: 0x7628BE, hoist: false, mentionable: false,
+        reason: `Hudson Academy setup by ${interaction.user.tag}`
+      });
+    }
+    if (role.managed || role.permissions.has(PermissionFlagsBits.Administrator) ||
+        role.permissions.has(PermissionFlagsBits.ManageRoles) ||
+        role.permissions.has(PermissionFlagsBits.ManageGuild))
+      return interaction.editReply('The Academy role must be an ordinary non-admin role.');
+    try {
+      await channel.permissionOverwrites.edit(interaction.guild.roles.everyone, { ViewChannel: false }, { reason: 'Academy members-only channel' });
+      await channel.permissionOverwrites.edit(role, { ViewChannel: true, ReadMessageHistory: true }, { reason: 'Academy role access' });
+    } catch(error) {
+      return interaction.editReply(`Role exists, but I could not configure channel permissions: ${error.message}`);
+    }
+    await store.setProduct(interaction.guildId, 'Academy', {
+      roleId: role.id, tutorialChannelId: channel.id, websiteSlug: slug || null
+    });
+    return interaction.editReply(
+      `Academy setup complete. Role: <@&${role.id}>. Channel: <#${channel.id}>. Only Academy members (and users with other overriding permissions) can view the channel.\n` +
+      `Use **/deliver** with product **Academy**, the purchaser, and their **HUD- order ID**. The shop must report successful delivery before Discord roles are assigned.\n` +
+      `Use **/academy post** to publish the instructions. Check **/academy status** for the website product ID.`
+    );
+  }
+  if (sub === 'post') {
+    await interaction.deferReply({ ephemeral: true });
+    const channel = interaction.options.getChannel('channel', true);
+    if (!channel?.isTextBased() || channel.guildId !== interaction.guildId)
+      return interaction.editReply('Select a text channel in this server.');
+    const roleId = settings.productRoles?.academy;
+    const embed = new EmbedBuilder()
+      .setColor(0x7628BE)
+      .setTitle('Hudson Academy | Getting Started')
+      .setDescription('Welcome to **Hudson Academy**! Follow these steps to access the Academy using the account that made the purchase.')
+      .addFields(
+        { name: '1. Open The Hudson Shop', value: 'Visit **https://thehudsonshop.com**.' },
+        { name: '2. Log in', value: 'Sign in using the **same email address/account you used at checkout**. Do not create a second account with a different email.' },
+        { name: '3. Open Hudson Academy', value: 'Visit **https://thehudsonshop.com/academy** while signed in.' },
+        { name: '4. Check your purchase', value: 'If access is locked, check **My Orders** for your Academy purchase and make sure payment/delivery has been confirmed.' },
+        { name: '5. Your Discord access', value: roleId
+          ? `Once staff verifies and delivers your order, you receive the <@&${roleId}> role and access to the Academy support channel.`
+          : 'Once staff verifies and delivers your order, you receive the Academy role and access to its Discord channel.' },
+        { name: 'Need help?', value: 'Open a support ticket with your **HUD- order ID**. Never share your password, full payment details, or license keys in public chat.' }
+      )
+      .setFooter({ text: 'Hudson Shop • Academy customer guide' });
+    try { await channel.send({ embeds: [embed], allowedMentions: { parse: [] } }); }
+    catch(error) { return interaction.editReply(`Could not post the guide: ${error.message}`); }
+    return interaction.editReply(`Academy getting-started guide posted in <#${channel.id}>.`);
+  }
+}
+
 async function handleFeatureCommand(interaction) {
   if (await denyUnlessStaff(interaction, PermissionFlagsBits.ManageRoles)) return;
   const sub = interaction.options.getSubcommand();
@@ -468,6 +549,7 @@ async function handleCommand(interaction) {
   if (interaction.commandName === 'deliver') return handleDeliver(interaction);
   if (interaction.commandName === 'product-role') return handleProductRoleCommand(interaction);
   if (interaction.commandName === 'product') return handleProductCommand(interaction);
+  if (interaction.commandName === 'academy') return handleAcademyCommand(interaction);
   if (interaction.commandName === 'feature') return handleFeatureCommand(interaction);
   if (interaction.commandName === 'welcome') return handleWelcomeCommand(interaction);
   if (interaction.commandName === 'faq') return handleFaqCommand(interaction, store);

@@ -85,3 +85,17 @@ test('Fortnite website orders validate against fortnite-private', () => {
   assert.equal(result.product, 'fortnite');
   assert.equal(result.delivered, true);
 });
+
+test('Academy orders use an exact allowed shop product ID', () => {
+  const { validateOrder } = require('../src/shop');
+  const order = {
+    id: '11111111-1111-4111-8111-111111111111',
+    public_order_id: 'HUD-ABC123',
+    product: 'academy',
+    status: 'paid',
+    delivered_at: '2026-11-13T00:00:00Z',
+    amount_cents: 499
+  };
+  assert.equal(validateOrder(order, 'HUD-ABC123', 'academy').delivered, true);
+  assert.throws(() => validateOrder({ ...order, product: 'fortnite-private' }, 'HUD-ABC123', 'academy'));
+});

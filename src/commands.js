@@ -97,6 +97,17 @@ function buildCommands() {
       .setDefaultMemberPermissions(PermissionFlagsBits.ManageRoles),
 
     new SlashCommandBuilder()
+      .setName('academy')
+      .setDescription('Configure Hudson Academy access and post the getting-started guide.')
+      .addSubcommand(s => s.setName('setup').setDescription('Create/map Academy role and lock the Academy channel.')
+        .addChannelOption(o => o.setName('channel').setDescription('Academy members-only text channel').addChannelTypes(ChannelType.GuildText).setRequired(true))
+        .addStringOption(o => o.setName('website-slug').setDescription('Exact Academy product ID in Shop Payments, if different from academy').setMaxLength(100)))
+      .addSubcommand(s => s.setName('post').setDescription('Post Academy access instructions in a channel.')
+        .addChannelOption(o => o.setName('channel').setDescription('Where to post the Academy guide').addChannelTypes(ChannelType.GuildText).setRequired(true)))
+      .addSubcommand(s => s.setName('status').setDescription('Show Academy role, channel, and website product ID.'))
+      .setDefaultMemberPermissions(PermissionFlagsBits.ManageGuild),
+
+    new SlashCommandBuilder()
       .setName('ticket-panel')
       .setDescription('Post the Hudson Shop Purchase / Support / Claim menu in this channel.')
       .setDefaultMemberPermissions(PermissionFlagsBits.ManageGuild),

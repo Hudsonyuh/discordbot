@@ -5,7 +5,7 @@ const PRODUCT_SLUGS = {
   'among us': ['among-us-private'], roblox: ['roblox-private'],
   minecraft: ['minecraft-private'], meccha: ['mecha-private'], discord: ['discord-members'],
   fivem: ['fivem-private', 'fivem', 'five-m-private', 'five-m'],
-  fortnite: ['fortnite-private']
+  fortnite: ['fortnite-private'], academy: ['academy', 'hudson-academy']
 };
 const CONFIRMABLE = new Set(['awaiting_payment', 'payment_claimed', 'under_review', 'more_information_needed', 'delivery_error']);
 
