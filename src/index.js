@@ -33,7 +33,7 @@ const {
 const { handleAnnouncementCommand, startAnnouncementScheduler } = require('./announcements');
 const { sendLog } = require('./logger');
 const { buildCommands } = require('./commands');
-const { sendWelcome, sendJoinDm, handleJoinSystemMessage } = require('./welcome');
+const { sendWelcome, sendJoinDm, handleJoinSystemMessage, previewJoinDms, confirmJoinDms } = require('./welcome');
 
 if (!process.env.DISCORD_TOKEN) {
   console.error('Missing DISCORD_TOKEN. Copy .env.example to .env and fill it in.');
@@ -202,6 +202,8 @@ async function handleWelcomeCommand(interaction) {
       ephemeral: true
     });
   }
+  if (sub === 'send') return previewJoinDms(interaction, store);
+  if (sub === 'send-confirm') return confirmJoinDms(interaction, store, client, sendLog);
   if (sub === 'off') {
     await store.updateSettings(interaction.guildId, { welcome: { ...settings.welcome, enabled: false } });
     return interaction.reply({ content: '✅ Automatic welcome messages are off.', ephemeral: true });
@@ -518,9 +520,12 @@ client.on('channelDelete', channel => {
   if (channel.guild && store.getTicketPanel(channel.guild.id, channel.id)) store.setTicketPanel(channel.guild.id, channel.id, null).catch(error => console.error('[ticket-delete]', error.message));
 });
 client.on('guildMemberAdd', async (member) => {
-  const dmSent = await sendJoinDm(member);
+  // Record a successful automatic DM so cohort backfills never re-message this member.
+  const alreadySent = store.hasWelcomeDmSent(member.guild.id, member.id);
+  const dmSent = alreadySent ? true : await sendJoinDm(member);
+  if (dmSent && !alreadySent) await store.markWelcomeDmSent(member.guild.id, member.id).catch(error => console.error('[welcome-dm] Save failed:', error.message));
   await sendLog(client, store, member.guild.id, {
-    title: dmSent ? 'New member DM sent' : 'New member DM failed',
+    title: alreadySent ? 'Welcome DM already recorded' : (dmSent ? 'New member DM sent' : 'New member DM failed'),
     description: dmSent
       ? `Successfully sent the automatic welcome DM to <@${member.id}>.`
       : `Could not send the automatic welcome DM to <@${member.id}>. Their Discord privacy settings may block DMs.`,

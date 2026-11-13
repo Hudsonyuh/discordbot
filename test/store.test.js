@@ -107,3 +107,14 @@ test('Fortnite has the Hudson Shop website slug and backfills an older empty map
   settings.products.fortnite = { name: 'Fortnite', websiteSlugs: [], features: [] };
   assert.deepEqual(store.getSettings('fortnite-guild').products.fortnite.websiteSlugs, ['fortnite-private']);
 });
+
+test('welcome DM delivery history persists and Hudson log channel overrides stale config', async t => {
+  const store = await fixture(t);
+  await store.updateSettings('1258581305453711503', { logChannelId: 'some-old-log' });
+  assert.equal(store.getSettings('1258581305453711503').logChannelId, '1258581306628112462');
+  assert.equal(store.hasWelcomeDmSent('1258581305453711503', 'member'), false);
+  await store.markWelcomeDmSent('1258581305453711503', 'member');
+  const restarted = new DataStore(store.filePath);
+  await restarted.init();
+  assert.equal(restarted.hasWelcomeDmSent('1258581305453711503', 'member'), true);
+});

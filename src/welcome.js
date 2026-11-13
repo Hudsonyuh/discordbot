@@ -84,10 +84,105 @@ async function sendJoinDm(member) {
   }
 }
 
+
+const dmPreviews = new Map();
+const MAX_BULK = 100;
+const PREVIEW_LIFETIME_MS = 10 * 60 * 1000;
+
+function getJoinWindow({ hours, sinceDate }, now = new Date()) {
+  if ((hours != null) === (sinceDate != null)) throw new Error('Provide either hours or since-date (not both).');
+  if (hours != null) {
+    if (!Number.isInteger(hours) || hours < 1 || hours > 720) throw new Error('Hours must be between 1 and 720.');
+    return new Date(now.getTime() - hours * 60 * 60 * 1000);
+  }
+  if (!/^\\d{4}-\\d{2}-\\d{2}$/.test(sinceDate || '')) throw new Error('Use YYYY-MM-DD for since-date (UTC).');
+  const cutoff = new Date(`${sinceDate}T00:00:00.000Z`);
+  if (!Number.isFinite(cutoff.getTime()) || cutoff.toISOString().slice(0, 10) !== sinceDate || cutoff > now) throw new Error('Choose a real date that is not in the future.');
+  if (now.getTime() - cutoff.getTime() > 30 * 24 * 3600 * 1000) throw new Error('Date must be within the last 30 days.');
+  return cutoff;
+}
+
+function selectJoinedMembers(members, cutoff, now, store, guildId) {
+  return [...members.values()]
+    .filter(m => !m.user?.bot && m.joinedAt instanceof Date && m.joinedAt >= cutoff && m.joinedAt <= now)
+    .filter(m => !store.hasWelcomeDmSent(guildId, m.id))
+    .sort((a,b) => a.joinedAt - b.joinedAt);
+}
+
+async function previewJoinDms(interaction, store) {
+  await interaction.deferReply({ ephemeral: true });
+  let cutoff;
+  try {
+    cutoff = getJoinWindow({
+      hours: interaction.options.getInteger('hours'),
+      sinceDate: interaction.options.getString('since-date')
+    });
+  } catch (error) {
+    return interaction.editReply(error.message);
+  }
+
+  let members;
+  try {
+    members = await interaction.guild.members.fetch();
+  } catch (error) {
+    console.error('[welcome-bulk] Cannot fetch members:', error.message);
+    return interaction.editReply('Cannot retrieve server members. Check the Server Members Intent in Discord Developer Portal and Railway ENABLE_MEMBER_INTENT=true.');
+  }
+  const now = new Date();
+  const matches = selectJoinedMembers(members, cutoff, now, store, interaction.guildId);
+  if (!matches.length) return interaction.editReply('No eligible members found in that window who have not already been sent a recorded welcome DM.');
+  if (matches.length > MAX_BULK) return interaction.editReply(`Found **${matches.length}** eligible members. This command is limited to ${MAX_BULK} per batch to protect Discord rate limits. Use a narrower window.`);
+
+  const token = require('node:crypto').randomBytes(4).toString('hex').toUpperCase();
+  for (const [key, state] of dmPreviews) if (state.expiresAt < Date.now()) dmPreviews.delete(key);
+  dmPreviews.set(`${interaction.guildId}:${interaction.user.id}`, {
+    token, userIds: matches.map(m => m.id), expiresAt: Date.now() + PREVIEW_LIFETIME_MS
+  });
+  return interaction.editReply(
+    `**Welcome DM preview**\nWindow: <t:${Math.floor(cutoff.getTime()/1000)}:F> → now\nEligible members: **${matches.length}**\nAlready successfully DMed members are excluded when recorded.\n\nRun **/welcome send-confirm code:${token}** within 10 minutes to DM this exact group. No messages have been sent yet.`
+  );
+}
+
+const wait = ms => new Promise(resolve => setTimeout(resolve, ms));
+
+async function confirmJoinDms(interaction, store, client, sendLog) {
+  const key = `${interaction.guildId}:${interaction.user.id}`;
+  const state = dmPreviews.get(key);
+  const token = String(interaction.options.getString('code', true)).trim().toUpperCase();
+  if (!state || state.token !== token || state.expiresAt < Date.now()) {
+    return interaction.reply({ content: 'No matching active preview. Run /welcome send first.', ephemeral: true });
+  }
+  dmPreviews.delete(key); // prevent double-submit
+  await interaction.deferReply({ ephemeral: true });
+  let sent = 0, failed = 0, skipped = 0;
+  for (const userId of state.userIds) {
+    try {
+      // A member might leave, rejoin, or receive a welcome DM after the preview.
+      const member = await interaction.guild.members.fetch(userId).catch(() => null);
+      if (!member || store.hasWelcomeDmSent(interaction.guildId, userId)) { skipped++; continue; }
+      const ok = await sendJoinDm(member);
+      if (ok) {
+        sent++;
+        await store.markWelcomeDmSent(interaction.guildId, userId);
+      } else failed++;
+    } catch (error) {
+      failed++;
+      console.error('[welcome-bulk] Recipient failed:', error.message);
+    }
+    await wait(1200);
+  }
+  await sendLog(client, store, interaction.guildId, {
+    title: 'Welcome DM batch completed',
+    description: `Started by <@${interaction.user.id}>. Sent **${sent}**, failed **${failed}**, skipped **${skipped}**.`,
+    color: failed ? 0xFEE75C : 0x57F287
+  });
+  return interaction.editReply(`Batch complete: **${sent} sent**, **${failed} failed**, **${skipped} skipped**. A summary was sent to server logs.`);
+}
+
 async function handleJoinSystemMessage(message, store) {
   if (!message.guild || message.type !== MessageType.UserJoin || !message.author || message.author.bot) return;
   const member = await message.guild.members.fetch(message.author.id).catch(() => null);
   if (member) await sendWelcome(member, store).catch((err) => console.error('[welcome-system]', err.message));
 }
 
-module.exports = { sendWelcome, sendJoinDm, handleJoinSystemMessage, render, JOIN_DM_MESSAGE };
+module.exports = { sendWelcome, sendJoinDm, handleJoinSystemMessage, render, JOIN_DM_MESSAGE, getJoinWindow, selectJoinedMembers, previewJoinDms, confirmJoinDms };

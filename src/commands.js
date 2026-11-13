@@ -116,6 +116,11 @@ function buildCommands() {
         .addStringOption((o) => o.setName('message').setDescription('Supports {user}, {username}, {displayName}, {server}, {memberCount}').setMaxLength(1500).setRequired(true)))
       .addSubcommand((s) => s.setName('test').setDescription('Send a test welcome using your own account.'))
       .addSubcommand((s) => s.setName('dm-test').setDescription('DM yourself the exact automatic join message.'))
+      .addSubcommand((s) => s.setName('send').setDescription('Preview DMs for people who joined in a specific window.')
+        .addIntegerOption(o => o.setName('hours').setDescription('Joined within the last X hours (1-720)').setMinValue(1).setMaxValue(720))
+        .addStringOption(o => o.setName('since-date').setDescription('Joined since YYYY-MM-DD (UTC; within 30 days)').setMaxLength(10)))
+      .addSubcommand((s) => s.setName('send-confirm').setDescription('Confirm the pending welcome DM preview.')
+        .addStringOption(o => o.setName('code').setDescription('Code from /welcome send preview').setRequired(true).setMinLength(8).setMaxLength(8)))
       .addSubcommand((s) => s.setName('off').setDescription('Turn automatic welcomes off.'))
       .addSubcommand((s) => s.setName('status').setDescription('Show the current welcome configuration.'))
       .setDefaultMemberPermissions(PermissionFlagsBits.ManageGuild),

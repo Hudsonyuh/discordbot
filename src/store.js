@@ -13,11 +13,14 @@ const DEFAULT_PRODUCTS = {
   fortnite: { name: 'Fortnite', websiteSlugs: ['fortnite-private'], features: [] }
 };
 
+const HUDSON_GUILD_ID = '1258581305453711503';
+const HUDSON_LOG_CHANNEL_ID = '1258581306628112462';
+
 const DEFAULT_SETTINGS = {
   ticketCategoryIds: [],
   ticketParentChannelIds: [],
   uncategorizedTickets: false,
-  logChannelId: null,
+  logChannelId: HUDSON_LOG_CHANNEL_ID,
   staffRoleId: null,
   customerRoleId: null,
   products: structuredClone(DEFAULT_PRODUCTS),
@@ -80,6 +83,9 @@ class DataStore {
     }
     const guild = this.data.guilds[guildId];
     guild.settings = { ...structuredClone(DEFAULT_SETTINGS), ...(guild.settings || {}) };
+    // Keep the dedicated Hudson server log channel authoritative over old/stale settings.
+    if (guildId === HUDSON_GUILD_ID) guild.settings.logChannelId = HUDSON_LOG_CHANNEL_ID;
+    guild.welcomeDmSent ||= {};
     guild.settings.welcome = { ...DEFAULT_SETTINGS.welcome, ...(guild.settings.welcome || {}) };
     guild.settings.faq = { ...structuredClone(DEFAULT_SETTINGS.faq), ...(guild.settings.faq || {}) };
     guild.ticketPanels ||= {};
@@ -115,6 +121,16 @@ class DataStore {
     }
     await this.save();
     return guild.settings;
+  }
+
+  hasWelcomeDmSent(guildId, userId) {
+    return Boolean(this._ensureGuild(guildId).welcomeDmSent[userId]);
+  }
+
+  async markWelcomeDmSent(guildId, userId) {
+    const guild = this._ensureGuild(guildId);
+    guild.welcomeDmSent[userId] = new Date().toISOString();
+    await this.save();
   }
 
   async addTicketCategory(guildId, categoryId) {
@@ -294,4 +310,4 @@ class DataStore {
   }
 }
 
-module.exports = { DataStore, DEFAULT_SETTINGS, DEFAULT_PRODUCTS };
+module.exports = { DataStore, DEFAULT_SETTINGS, DEFAULT_PRODUCTS, HUDSON_GUILD_ID, HUDSON_LOG_CHANNEL_ID };
