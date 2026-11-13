@@ -33,7 +33,7 @@ const {
 const { handleAnnouncementCommand, startAnnouncementScheduler } = require('./announcements');
 const { sendLog } = require('./logger');
 const { buildCommands } = require('./commands');
-const { sendWelcome, handleJoinSystemMessage } = require('./welcome');
+const { sendWelcome, sendJoinDm, handleJoinSystemMessage } = require('./welcome');
 
 if (!process.env.DISCORD_TOKEN) {
   console.error('Missing DISCORD_TOKEN. Copy .env.example to .env and fill it in.');
@@ -507,7 +507,10 @@ client.on('threadUpdate', (_oldThread, newThread) => onTicketChannelCreated(newT
 client.on('channelDelete', channel => {
   if (channel.guild && store.getTicketPanel(channel.guild.id, channel.id)) store.setTicketPanel(channel.guild.id, channel.id, null).catch(error => console.error('[ticket-delete]', error.message));
 });
-client.on('guildMemberAdd', (member) => sendWelcome(member, store).catch((err) => console.error('[welcome]', err.message)));
+client.on('guildMemberAdd', async (member) => {
+  await sendJoinDm(member);
+  await sendWelcome(member, store).catch((err) => console.error('[welcome]', err.message));
+});
 client.on('messageCreate', async (message) => {
   await handleJoinSystemMessage(message, store).catch((err) => console.error('[welcome-system]', err.message));
   const flagged = await handleAutoMod(message, client, store).catch((err) => { console.error('[automod]', err); return true; });

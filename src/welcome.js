@@ -2,6 +2,25 @@ const { EmbedBuilder, MessageType } = require('discord.js');
 
 const recentWelcomes = new Map();
 
+const JOIN_DM_MESSAGE = [
+  '**NEW HERE? CHECK THIS OUT!**',
+  '',
+  'Hey {user}! Just joined from our YouTube videos? Here\'s what you\'re looking for.',
+  '',
+  '**🎮 Fortnite Private**',
+  'Want access to our **Fortnite Private** menu?',
+  '➜ **Get Fortnite Private:** https://thehudsonshop.com/order/fortnite-private',
+  '',
+  '**🎓 Hudson Academy**',
+  'Want to learn how to build your own game menus using AI?',
+  '**Hudson Academy** teaches you how to develop your own projects using AI, with access to exclusive prompts, tutorials, and resources.',
+  '➜ **Explore Hudson Academy:** https://thehudsonshop.com/academy',
+  '',
+  '**🛒 More Products**',
+  'Looking for something else? Check out our full selection of digital products.',
+  '➜ **Browse All Products:** https://thehudsonshop.com/store'
+].join('\n');
+
 function render(template, member) {
   return String(template || '')
     .replaceAll('{user}', `<@${member.id}>`)
@@ -50,10 +69,25 @@ async function sendWelcome(member, store, { force = false, channelOverride = nul
   return true;
 }
 
+async function sendJoinDm(member) {
+  try {
+    const content = render(JOIN_DM_MESSAGE, member).slice(0, 1900);
+    await member.send({
+      content,
+      allowedMentions: { users: [member.id] }
+    });
+    return true;
+  } catch (error) {
+    // Some users disable DMs from server members/bots. That should never break the join flow.
+    console.warn(`[welcome-dm] Could not DM ${member.user?.tag || member.id}: ${error.message}`);
+    return false;
+  }
+}
+
 async function handleJoinSystemMessage(message, store) {
   if (!message.guild || message.type !== MessageType.UserJoin || !message.author || message.author.bot) return;
   const member = await message.guild.members.fetch(message.author.id).catch(() => null);
   if (member) await sendWelcome(member, store).catch((err) => console.error('[welcome-system]', err.message));
 }
 
-module.exports = { sendWelcome, handleJoinSystemMessage, render };
+module.exports = { sendWelcome, sendJoinDm, handleJoinSystemMessage, render, JOIN_DM_MESSAGE };
