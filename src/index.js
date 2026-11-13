@@ -305,7 +305,7 @@ async function handleAcademyCommand(interaction) {
       `Channel: ${channelId ? `<#${channelId}>` : 'Not configured'}`,
       `Website product ID(s): ${slugs.length ? slugs.map(x => `\`${x}\``).join(', ') : 'Not configured'}`,
       'The /deliver command validates an exact website order and confirms delivery before assigning roles.'
-    ].join('\\n'), ephemeral: true });
+    ].join('\n'), ephemeral: true });
   }
   if (sub === 'setup') {
     await interaction.deferReply({ ephemeral: true });
@@ -313,8 +313,9 @@ async function handleAcademyCommand(interaction) {
     const slug = interaction.options.getString('website-slug');
     if (!channel?.permissionOverwrites?.edit || channel.guildId !== interaction.guildId)
       return interaction.editReply('Select a text channel in this server.');
-    if (!interaction.guild.members.me?.permissions.has(PermissionFlagsBits.ManageRoles) ||
-        !interaction.guild.members.me?.permissions.has(PermissionFlagsBits.ManageChannels))
+    const botMember = await interaction.guild.members.fetchMe();
+    if (!botMember.permissions.has(PermissionFlagsBits.ManageRoles) ||
+        !botMember.permissions.has(PermissionFlagsBits.ManageChannels))
       return interaction.editReply('I need **Manage Roles** and **Manage Channels** permissions to set up Academy.');
     let role = settings.productRoles?.academy
       ? await interaction.guild.roles.fetch(settings.productRoles.academy).catch(() => null)

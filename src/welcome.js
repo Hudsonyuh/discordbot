@@ -204,4 +204,4 @@ async function handleJoinSystemMessage(message, store) {
   if (member) await sendWelcome(member, store).catch((err) => console.error('[welcome-system]', err.message));
 }
 
-module.exports = { sendWelcome, sendJoinDm, handleJoinSystemMessage, render, JOIN_DM_MESSAGE, getJoinWindow, selectJoinedMembers, previewJoinDms, confirmJoinDms };
+module.exports = { sendWelcome, sendJoinDm, handleJoinSystemMessage, render, JOIN_DM_MESSAGE, getJoinWindow, selectJoinedMembers, fetchJoinCandidates, previewJoinDms, confirmJoinDms };
